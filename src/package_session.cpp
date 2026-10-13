@@ -2,6 +2,49 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <chrono>
+
+bool PackageSession::BeginLoad(const std::string& path)
+{
+    if (IsLoading())
+        return false;
+    try
+    {
+        pending = std::async(std::launch::async, [path] {
+            auto result = std::make_unique<PackageSession>();
+            result->Load(path);
+            return result;
+        });
+        error.clear();
+        return true;
+    }
+    catch (const std::exception& ex)
+    {
+        error = ex.what();
+        return false;
+    }
+}
+
+void PackageSession::PollLoad()
+{
+    if (!IsLoading() || pending.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+        return;
+    try
+    {
+        auto result = pending.get();
+        if (result->package)
+        {
+            package = std::move(result->package);
+            selected = &package->rootChunks.front();
+            status = std::move(result->status);
+        }
+        error = std::move(result->error);
+    }
+    catch (const std::exception& ex)
+    {
+        error = ex.what();
+    }
+}
 
 bool PackageSession::Load(const std::string& path)
 {

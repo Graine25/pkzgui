@@ -2,6 +2,20 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <thread>
+#include <chrono>
+
+void FinishLoad(PackageSession& session)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (session.IsLoading())
+    {
+        if (std::chrono::steady_clock::now() > deadline)
+            throw std::runtime_error("Background loading timed out");
+        session.PollLoad();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
 
 void Check(bool condition, const char* message)
 {
@@ -55,6 +69,14 @@ int main(int argc, char** argv)
         const auto leafPath = directory / "empty-leaf.pak";
         emptyLeaf.WriteToFile(leafPath.u8string());
         Check(session.Load(leafPath.u8string()) && session.package->isLittleEndian, "Empty leaf byte order detection failed");
+        Check(session.BeginLoad(leafPath.u8string()) && session.IsLoading(), "Loading state missing");
+        Check(!session.BeginLoad(invalid.u8string()), "Overlapping load should be rejected");
+        FinishLoad(session);
+        Check(session.package && session.error.empty(), "Background load failed");
+        previous = session.package.get();
+        Check(session.BeginLoad(invalid.u8string()), "Failed to start background load");
+        FinishLoad(session);
+        Check(session.package.get() == previous && !session.error.empty(), "Background failure discarded previous package");
         std::cout << "Package loading checks passed\n";
         return 0;
     }

@@ -43,18 +43,22 @@ namespace
         ImGui::TableSetColumnIndex(2);
         ImGui::TextUnformatted(type);
         ImGui::TableSetColumnIndex(3);
+        ImGui::PushTextWrapPos(0);
         ImGui::TextUnformatted(value.c_str());
+        ImGui::PopTextWrapPos();
     }
 }
 
 void Workspace::Draw()
 {
+    session.PollLoad();
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::Begin("Workspace", nullptr, ImGuiWindowFlags_NoDecoration |
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+    ImGui::BeginDisabled(session.IsLoading());
 
     const float statusHeight = ImGui::GetFrameHeight();
     const float bodyHeight = std::max(1.0f, ImGui::GetContentRegionAvail().y - statusHeight);
@@ -73,16 +77,22 @@ void Workspace::Draw()
     if (ImGui::IsItemActive())
         splitX += ImGui::GetIO().MouseDelta.x;
     ImGui::SameLine(0, 0);
-    ImGui::BeginChild("Fields", ImVec2(0, bodyHeight), ImGuiChildFlags_Borders);
+    preview.Update(session);
+    ImGui::BeginChild("Right pane", ImVec2(0, bodyHeight));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12, 10));
+    const float fieldsHeight = preview.active ? bodyHeight * 0.4f : 0;
+    ImGui::BeginChild("Fields", ImVec2(0, fieldsHeight),
+        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::TextUnformatted(session.selected ? ToString(session.selected->GetIDToEnum()).c_str() : "Chunk details");
+    ImGui::Spacing();
     if (ImGui::BeginTable("Field table", 4, ImGuiTableFlags_Resizable |
         ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_NoBordersInBody |
-        ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY |
-        ImGuiTableFlags_SizingFixedFit, ImVec2(0, 0)))
+        ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp, ImVec2(0, 0)))
     {
-        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthFixed, 260);
-        ImGui::TableSetupColumn("Offset", ImGuiTableColumnFlags_WidthFixed, 90);
-        ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 140);
-        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 480);
+        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 0.30f);
+        ImGui::TableSetupColumn("Offset", ImGuiTableColumnFlags_WidthStretch, 0.12f);
+        ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthStretch, 0.16f);
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.42f);
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableHeadersRow();
         if (session.selected)
@@ -95,16 +105,42 @@ void Workspace::Draw()
             DrawRow("Offset", "", Hex(chunk.offset));
             DrawRow("Header Size", "", std::to_string(chunk.HeaderSize()));
             DrawRow("Children", "", std::to_string(chunk.children.size()));
+            if (preview.active && preview.error.empty())
+            {
+                DrawRow("Texture", "string", preview.name);
+                DrawRow("Width", "u32", std::to_string(preview.width));
+                DrawRow("Height", "u32", std::to_string(preview.height));
+            }
         }
         ImGui::EndTable();
     }
     ImGui::EndChild();
+    if (preview.active)
+    {
+        ImGui::Dummy(ImVec2(0, gap));
+        ImGui::BeginChild("Texture preview", ImVec2(0, 0),
+            ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        preview.Draw();
+        ImGui::EndChild();
+    }
 
-    ImGui::BeginChild("Status", ImVec2(0, statusHeight), ImGuiChildFlags_Borders);
-    ImGui::TextUnformatted(session.status.c_str());
+    ImGui::PopStyleVar();
     ImGui::EndChild();
+    ImGui::BeginChild("Status", ImVec2(0, statusHeight), ImGuiChildFlags_Borders);
+    ImGui::TextUnformatted(session.IsLoading() ? "Loading package..." : session.status.c_str());
+    ImGui::EndChild();
+    ImGui::EndDisabled();
     ImGui::End();
     ImGui::PopStyleVar();
+
+    if (session.IsLoading())
+    {
+        ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::Begin("Loading", nullptr, ImGuiWindowFlags_NoDecoration |
+            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings);
+        ImGui::TextUnformatted("Loading package...");
+        ImGui::End();
+    }
 
     if (!session.error.empty())
         ImGui::OpenPopup("Failed to open package");

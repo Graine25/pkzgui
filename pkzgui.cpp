@@ -17,6 +17,7 @@
 #include <commctrl.h>
 #include <commdlg.h>
 #include <shellapi.h>
+#include <mmsystem.h>
 
 #include <algorithm>
 #include <climits>
@@ -25,6 +26,7 @@
 #include <cstring>
 #include <exception>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <string>
@@ -44,6 +46,7 @@
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "comdlg32.lib")
 #pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "winmm.lib")
 #pragma comment(linker, "/manifestdependency:\"type='win32' name='Microsoft.Windows.Common-Controls' " \
                         "version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
@@ -66,9 +69,12 @@ namespace
         IDM_EDIT_FIELD = 40020,
         IDM_TEX_EXTRACT = 40030,
         IDM_TEX_REPLACE = 40031,
+        IDM_AUDIO_EXTRACT = 40040,
+        IDM_AUDIO_PLAY = 40041,
     };
 
     constexpr LPARAM kTreeTexFlag = static_cast<LPARAM>(1u << 31);
+    constexpr LPARAM kTreeAudioFlag = static_cast<LPARAM>(1u << 30);
 
     constexpr int kSplitDefault = 340;
     constexpr size_t kMaxFieldRows = 200000;
@@ -94,6 +100,7 @@ namespace
     std::unique_ptr<PKPackage> gPackage;
     std::vector<const CMChunk*> gChunkIndex;
     std::vector<CMChunkResourceHeader> gTextureHeaders;
+    std::vector<CMChunkResourceHeader> gAudioHeaders;
 
     bool gDirty = false;
     std::vector<uint8_t> gLastSavedBytes;
@@ -113,6 +120,31 @@ namespace
     int gSelectedTexIdx = -1;
     CMChunk* gActiveTextureData = nullptr;
     CMChunk* gActiveTextureHeaderChunk = nullptr;
+    int gSelectedAudioIdx = -1;
+    CMChunk* gActiveAudioData = nullptr;
+    std::wstring gActiveAudioName;
+
+    struct Xma2Format
+    {
+        uint16_t formatTag = 0;
+        uint16_t channels = 0;
+        uint32_t samplesPerSec = 0;
+        uint32_t avgBytesPerSec = 0;
+        uint16_t blockAlign = 0;
+        uint16_t bitsPerSample = 0;
+        uint16_t cbSize = 0;
+        uint16_t numStreams = 0;
+        uint32_t channelMask = 0;
+        uint32_t samplesEncoded = 0;
+        uint32_t bytesPerBlock = 0;
+        uint32_t playBegin = 0;
+        uint32_t playLength = 0;
+        uint32_t loopBegin = 0;
+        uint32_t loopLength = 0;
+        uint8_t loopCount = 0;
+        uint8_t encoderVersion = 0;
+        uint16_t blockCount = 0;
+    };
 
     std::wstring Widen(const std::string& s)
     {
@@ -290,6 +322,337 @@ namespace
         if (end == p)
             return SIZE_MAX;
         return static_cast<size_t>(v);
+    }
+
+    uint16_t ReadBE16(const uint8_t* p)
+    {
+        return static_cast<uint16_t>((p[0] << 8) | p[1]);
+    }
+
+    uint32_t ReadBE32(const uint8_t* p)
+    {
+        return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+            (static_cast<uint32_t>(p[2]) << 8) | p[3];
+    }
+
+    Xma2Format ParseXma2Format(const uint8_t* p, size_t avail)
+    {
+        Xma2Format f{};
+        if (avail < 52)
+            return f;
+        f.formatTag = ReadBE16(p + 0);
+        f.channels = ReadBE16(p + 2);
+        f.samplesPerSec = ReadBE32(p + 4);
+        f.avgBytesPerSec = ReadBE32(p + 8);
+        f.blockAlign = ReadBE16(p + 12);
+        f.bitsPerSample = ReadBE16(p + 14);
+        f.cbSize = ReadBE16(p + 16);
+        f.numStreams = ReadBE16(p + 18);
+        f.channelMask = ReadBE32(p + 20);
+        f.samplesEncoded = ReadBE32(p + 24);
+        f.bytesPerBlock = ReadBE32(p + 28);
+        f.playBegin = ReadBE32(p + 32);
+        f.playLength = ReadBE32(p + 36);
+        f.loopBegin = ReadBE32(p + 40);
+        f.loopLength = ReadBE32(p + 44);
+        f.loopCount = p[48];
+        f.encoderVersion = p[49];
+        f.blockCount = ReadBE16(p + 50);
+        return f;
+    }
+
+    bool ExtractAudioPayload(const CMChunk& chunk, Xma2Format& fmt, std::vector<uint8_t>& xmaData)
+    {
+        const uint32_t id = chunk.GetMaskedID();
+        const uint8_t* d = chunk.data.data();
+        const size_t n = chunk.data.size();
+
+        if (id == CMChunkTypes::Audio_SampleData)
+        {
+            if (n < 80)
+                return false;
+            const uint32_t seekTableSize = ReadBE32(d + 4);
+            const uint32_t dataSize = ReadBE32(d + 24);
+            fmt = ParseXma2Format(d + 28, n - 28);
+            const size_t dataOff = 80 + static_cast<size_t>(seekTableSize);
+            if (dataOff + dataSize > n)
+                return false;
+            xmaData.assign(d + dataOff, d + dataOff + dataSize);
+            return fmt.formatTag == 0x0166 && fmt.channels > 0 && fmt.samplesPerSec > 0 && !xmaData.empty();
+        }
+
+        if (id == CMChunkTypes::CutScene_Audio_SampleData)
+        {
+            if (n < 20)
+                return false;
+            const uint32_t dataSize = ReadBE32(d + 16);
+            if (20 + dataSize > n)
+                return false;
+            xmaData.assign(d + 20, d + 20 + dataSize);
+
+            const CMChunk* hdr = nullptr;
+            if (gPackage)
+            {
+                for (const CMChunk& root : gPackage->rootChunks)
+                {
+                    std::function<const CMChunk* (const CMChunk&)> find = [&](const CMChunk& c) -> const CMChunk* {
+                        if (c.GetMaskedID() == CMChunkTypes::CutScene_Audio_SampleHeader)
+                            return &c;
+                        for (const CMChunk& ch : c.children)
+                        {
+                            if (const CMChunk* f = find(ch))
+                                return f;
+                        }
+                        return nullptr;
+                        };
+                    hdr = find(root);
+                    if (hdr)
+                        break;
+                }
+            }
+            if (!hdr || hdr->data.size() < 76)
+                return false;
+            fmt = ParseXma2Format(hdr->data.data() + 24, hdr->data.size() - 24);
+            return fmt.formatTag == 0x0166 && fmt.channels > 0 && fmt.samplesPerSec > 0 && !xmaData.empty();
+        }
+
+        return false;
+    }
+
+    bool IsAudioSampleChunk(const CMChunk* chunk)
+    {
+        if (!chunk)
+            return false;
+        const uint32_t id = chunk->GetMaskedID();
+        return id == static_cast<uint32_t>(Audio_SampleData) ||
+            id == static_cast<uint32_t>(CutScene_Audio_SampleData);
+    }
+
+    bool ResolveAudioFromHeader(const CMChunkResourceHeader& hdr, Xma2Format& fmt, std::vector<uint8_t>& xmaData)
+    {
+        CMChunk* post = FindMutableRootAtOffset(hdr.GetDataOffset());
+        if (!post || post->GetMaskedID() != static_cast<uint32_t>(Gen_PostLoadData))
+            return false;
+        CMChunk* sample = post->FindChild(static_cast<uint32_t>(Audio_SampleData));
+        if (!sample)
+            return false;
+        gActiveAudioData = sample;
+        gActiveChunk = sample;
+        return ExtractAudioPayload(*sample, fmt, xmaData);
+    }
+
+    bool GetActiveAudioPayload(Xma2Format& fmt, std::vector<uint8_t>& xmaData)
+    {
+        if (gSelectedAudioIdx >= 0 && static_cast<size_t>(gSelectedAudioIdx) < gAudioHeaders.size())
+            return ResolveAudioFromHeader(gAudioHeaders[static_cast<size_t>(gSelectedAudioIdx)], fmt, xmaData);
+        if (IsAudioSampleChunk(gActiveChunk))
+            return ExtractAudioPayload(*gActiveChunk, fmt, xmaData);
+        return false;
+    }
+
+    std::wstring SanitizeFileName(std::wstring name)
+    {
+        if (name.empty())
+            name = L"sample";
+        for (auto& c : name)
+            if (wcschr(L"/\\:*?\"<>|", c))
+                c = L'_';
+        return name;
+    }
+
+    std::wstring FindFfmpeg()
+    {
+        const std::wstring dir = ExeDir();
+        const std::wstring local = dir + L"\\ffmpeg.exe";
+        if (GetFileAttributesW(local.c_str()) != INVALID_FILE_ATTRIBUTES)
+            return local;
+        if (GetFileAttributesW(L"ffmpeg.exe") != INVALID_FILE_ATTRIBUTES)
+            return L"ffmpeg.exe";
+        return {};
+    }
+
+    void WriteLE16(std::vector<uint8_t>& b, uint16_t v)
+    {
+        b.push_back(static_cast<uint8_t>(v & 0xFF));
+        b.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+    }
+
+    void WriteLE32(std::vector<uint8_t>& b, uint32_t v)
+    {
+        b.push_back(static_cast<uint8_t>(v & 0xFF));
+        b.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+        b.push_back(static_cast<uint8_t>((v >> 16) & 0xFF));
+        b.push_back(static_cast<uint8_t>((v >> 24) & 0xFF));
+    }
+
+    std::vector<uint8_t> BuildXmaContainer(const Xma2Format& fmt, const uint8_t* data, size_t size)
+    {
+        std::vector<uint8_t> out;
+        out.reserve(12 + 8 + 52 + 8 + size);
+        out.insert(out.end(), { 'R', 'I', 'F', 'F' });
+        WriteLE32(out, 0);
+        out.insert(out.end(), { 'W', 'A', 'V', 'E' });
+        out.insert(out.end(), { 'f', 'm', 't', ' ' });
+        WriteLE32(out, 52);
+        WriteLE16(out, fmt.formatTag);
+        WriteLE16(out, fmt.channels);
+        WriteLE32(out, fmt.samplesPerSec);
+        WriteLE32(out, fmt.avgBytesPerSec);
+        WriteLE16(out, fmt.blockAlign);
+        WriteLE16(out, fmt.bitsPerSample);
+        WriteLE16(out, fmt.cbSize ? fmt.cbSize : 34);
+        WriteLE16(out, fmt.numStreams);
+        WriteLE32(out, fmt.channelMask);
+        WriteLE32(out, fmt.samplesEncoded);
+        WriteLE32(out, fmt.bytesPerBlock);
+        WriteLE32(out, fmt.playBegin);
+        WriteLE32(out, fmt.playLength);
+        WriteLE32(out, fmt.loopBegin);
+        WriteLE32(out, fmt.loopLength);
+        out.push_back(fmt.loopCount);
+        out.push_back(fmt.encoderVersion);
+        WriteLE16(out, fmt.blockCount);
+        out.insert(out.end(), { 'd', 'a', 't', 'a' });
+        WriteLE32(out, static_cast<uint32_t>(size));
+        out.insert(out.end(), data, data + size);
+        const uint32_t riffSize = static_cast<uint32_t>(out.size() - 8);
+        out[4] = static_cast<uint8_t>(riffSize & 0xFF);
+        out[5] = static_cast<uint8_t>((riffSize >> 8) & 0xFF);
+        out[6] = static_cast<uint8_t>((riffSize >> 16) & 0xFF);
+        out[7] = static_cast<uint8_t>((riffSize >> 24) & 0xFF);
+        return out;
+    }
+
+    bool RunFfmpeg(const std::wstring& inPath, const std::wstring& outPath)
+    {
+        const std::wstring ffmpeg = FindFfmpeg();
+        if (ffmpeg.empty())
+            throw std::runtime_error("ffmpeg.exe not found next to pkzgui.exe");
+
+        std::wstring cmd = L"\"" + ffmpeg + L"\" -y -i \"" + inPath +
+            L"\" -c:a pcm_s16le \"" + outPath + L"\"";
+
+        STARTUPINFOW si{};
+        si.cb = sizeof(si);
+        si.dwFlags = STARTF_USESHOWWINDOW;
+        si.wShowWindow = SW_HIDE;
+        PROCESS_INFORMATION pi{};
+
+        std::vector<wchar_t> buf(cmd.begin(), cmd.end());
+        buf.push_back(0);
+
+        if (!CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE,
+            CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+            throw std::runtime_error("failed to launch ffmpeg.exe");
+
+        WaitForSingleObject(pi.hProcess, 60000);
+        DWORD code = 1;
+        GetExitCodeProcess(pi.hProcess, &code);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        return code == 0;
+    }
+
+    std::wstring MakeTempPath(const wchar_t* prefix, const wchar_t* ext)
+    {
+        wchar_t dir[MAX_PATH];
+        GetTempPathW(MAX_PATH, dir);
+        wchar_t name[MAX_PATH];
+        GetTempFileNameW(dir, prefix, 0, name);
+        std::wstring path = name;
+        if (ext && *ext)
+        {
+            DeleteFileW(path.c_str());
+            path += ext;
+        }
+        return path;
+    }
+
+    void XmaToWavFile(const Xma2Format& fmt, const uint8_t* data, size_t size, const std::wstring& outWav)
+    {
+        const auto container = BuildXmaContainer(fmt, data, size);
+        const std::wstring tmpIn = MakeTempPath(L"xma", L".wav");
+        {
+            std::ofstream f(Narrow(tmpIn), std::ios::binary);
+            f.write(reinterpret_cast<const char*>(container.data()),
+                static_cast<std::streamsize>(container.size()));
+        }
+        const bool ok = RunFfmpeg(tmpIn, outWav);
+        DeleteFileW(tmpIn.c_str());
+        if (!ok)
+        {
+            DeleteFileW(outWav.c_str());
+            throw std::runtime_error("ffmpeg failed to decode XMA2");
+        }
+    }
+
+    void ExtractActiveAudio()
+    {
+        try
+        {
+            Xma2Format fmt;
+            std::vector<uint8_t> xma;
+            if (!GetActiveAudioPayload(fmt, xma))
+            {
+                MessageBoxW(gMain, L"Select an audio sample resource first.",
+                    L"Extract audio", MB_ICONINFORMATION | MB_OK);
+                return;
+            }
+
+            std::wstring def = SanitizeFileName(gActiveAudioName) + L".wav";
+            wchar_t path[MAX_PATH]{};
+            wcsncpy_s(path, def.c_str(), _TRUNCATE);
+            OPENFILENAMEW ofn{};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = gMain;
+            ofn.lpstrFilter = L"WAV (*.wav)\0*.wav\0All files (*.*)\0*.*\0";
+            ofn.lpstrFile = path;
+            ofn.nMaxFile = MAX_PATH;
+            ofn.lpstrTitle = L"Extract audio";
+            ofn.lpstrDefExt = L"wav";
+            ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_EXPLORER;
+            if (!GetSaveFileNameW(&ofn))
+                return;
+
+            SetStatus(L"Decoding XMA2 with ffmpeg...");
+            XmaToWavFile(fmt, xma.data(), xma.size(), path);
+            SetStatus(L"Extracted " + std::wstring(path) + L"  (" +
+                std::to_wstring(fmt.samplesPerSec) + L" Hz, " +
+                std::to_wstring(fmt.channels) + L" ch)");
+        }
+        catch (const std::exception& ex)
+        {
+            MessageBoxW(gMain, Widen(ex.what()).c_str(), L"Extract audio failed", MB_ICONERROR | MB_OK);
+        }
+    }
+
+    void PlayActiveAudio()
+    {
+        try
+        {
+            Xma2Format fmt;
+            std::vector<uint8_t> xma;
+            if (!GetActiveAudioPayload(fmt, xma))
+            {
+                MessageBoxW(gMain, L"Select an audio sample resource first.",
+                    L"Play audio", MB_ICONINFORMATION | MB_OK);
+                return;
+            }
+
+            const std::wstring tmpWav = MakeTempPath(L"pkz", L".wav");
+            SetStatus(L"Decoding XMA2 with ffmpeg...");
+            XmaToWavFile(fmt, xma.data(), xma.size(), tmpWav);
+            SetStatus(L"Playing " + (gActiveAudioName.empty() ? L"sample" : gActiveAudioName) +
+                L"  " + std::to_wstring(fmt.samplesPerSec) + L" Hz  " +
+                std::to_wstring(fmt.channels) + L" ch");
+            PlaySoundW(tmpWav.c_str(), nullptr, SND_FILENAME | SND_SYNC);
+            DeleteFileW(tmpWav.c_str());
+            SetStatus(L"Playback finished.");
+        }
+        catch (const std::exception& ex)
+        {
+            MessageBoxW(gMain, Widen(ex.what()).c_str(), L"Play audio failed", MB_ICONERROR | MB_OK);
+        }
     }
 
     EditableField MakeEditable(CMChunk* chunk, const pkzgui::Row& row)
@@ -642,6 +1005,73 @@ namespace
         gActiveTextureHeaderChunk = FindChunkByOffset(hdr.offset);
     }
 
+    void ShowAudioResource(size_t audioIdx)
+    {
+        ClearPreview();
+        gSelectedTexIdx = -1;
+        gActiveTextureData = nullptr;
+        gActiveTextureHeaderChunk = nullptr;
+        gSelectedAudioIdx = -1;
+        gActiveAudioData = nullptr;
+        gActiveAudioName.clear();
+        gActiveChunk = nullptr;
+
+        if (!gPackage || audioIdx >= gAudioHeaders.size())
+        {
+            ClearList();
+            gEditFields.clear();
+            return;
+        }
+
+        gSelectedAudioIdx = static_cast<int>(audioIdx);
+        const CMChunkResourceHeader& hdr = gAudioHeaders[audioIdx];
+        gActiveAudioName = Widen(hdr.GetName());
+
+        std::vector<pkzgui::Row> rows;
+        rows.push_back({ 0, "Audio Sample Resource", "", "", "" });
+        rows.push_back({ 1, "name", "", "string", hdr.GetName() });
+        rows.push_back({ 1, "type", "", "", hdr.GetResourceTypeName() });
+        rows.push_back({ 1, "crc", "", "u32", pkzgui::Hex(hdr.GetCRC()) });
+        rows.push_back({ 1, "languageMask", "", "u32", pkzgui::Hex(hdr.GetLanguageMask()) });
+        rows.push_back({ 1, "qualityLevel", "", "u32", std::to_string(hdr.GetQualityLevel()) });
+        rows.push_back({ 1, "dataOffset", "", "u64", pkzgui::Hex(static_cast<uint64_t>(hdr.GetDataOffset())) });
+        rows.push_back({ 1, "postLoadDataCRC", "", "u32", pkzgui::Hex(hdr.GetPostLoadDataCRC()) });
+
+        Xma2Format fmt;
+        std::vector<uint8_t> xma;
+        if (ResolveAudioFromHeader(hdr, fmt, xma))
+        {
+            rows.push_back({ 0, "XMA2 Format", "", "", "" });
+            rows.push_back({ 1, "formatTag", "", "u16", pkzgui::Hex(fmt.formatTag) + " (XMA2)" });
+            rows.push_back({ 1, "channels", "", "u16", std::to_string(fmt.channels) });
+            rows.push_back({ 1, "samplesPerSec", "", "u32", std::to_string(fmt.samplesPerSec) });
+            rows.push_back({ 1, "avgBytesPerSec", "", "u32", std::to_string(fmt.avgBytesPerSec) });
+            rows.push_back({ 1, "blockAlign", "", "u16", std::to_string(fmt.blockAlign) });
+            rows.push_back({ 1, "bitsPerSample", "", "u16", std::to_string(fmt.bitsPerSample) });
+            rows.push_back({ 1, "numStreams", "", "u16", std::to_string(fmt.numStreams) });
+            rows.push_back({ 1, "samplesEncoded", "", "u32", std::to_string(fmt.samplesEncoded) });
+            rows.push_back({ 1, "bytesPerBlock", "", "u32", std::to_string(fmt.bytesPerBlock) });
+            rows.push_back({ 1, "blockCount", "", "u16", std::to_string(fmt.blockCount) });
+            rows.push_back({ 1, "payload", "", "bytes", std::to_string(xma.size()) });
+
+            wchar_t status[512];
+            swprintf_s(status, L"Audio: %s  %u Hz  %u ch  %zu bytes  — Audio → Play / Extract",
+                gActiveAudioName.c_str(), fmt.samplesPerSec, fmt.channels, xma.size());
+            SetStatus(status);
+        }
+        else
+        {
+            rows.push_back({ 1, "error", "", "", "could not locate Audio_SampleData payload" });
+            SetStatus(L"Audio sample: " + gActiveAudioName + L" (payload missing)");
+        }
+
+        FillList(rows, gActiveAudioData);
+
+        RECT rc;
+        if (gMain && GetClientRect(gMain, &rc))
+            LayoutChildren(rc.right - rc.left, rc.bottom - rc.top);
+    }
+
     void ShowTextureResource(size_t texIdx)
     {
         ClearPreview();
@@ -649,6 +1079,9 @@ namespace
         gActiveChunk = nullptr;
         gActiveTextureData = nullptr;
         gActiveTextureHeaderChunk = nullptr;
+        gSelectedAudioIdx = -1;
+        gActiveAudioData = nullptr;
+        gActiveAudioName.clear();
         if (!gPackage || texIdx >= gTextureHeaders.size())
         {
             ClearList();
@@ -1065,6 +1498,13 @@ namespace
                         ShowTextureResource(0);
                         return;
                     }
+                    if (hdr.GetResourceType() == kCMResourceType_AudioSample)
+                    {
+                        gAudioHeaders.clear();
+                        gAudioHeaders.push_back(hdr);
+                        ShowAudioResource(0);
+                        return;
+                    }
                 }
                 catch (...)
                 {
@@ -1199,6 +1639,7 @@ namespace
     void RebuildTreeSimple()
     {
         gTextureHeaders.clear();
+        gAudioHeaders.clear();
         std::vector<const CMChunk*> libs;
         CollectLibraries(libs);
 
@@ -1207,6 +1648,7 @@ namespace
             std::string title;
             std::vector<const CMChunk*> libs;
             bool isTexture = false;
+            bool isAudio = false;
         };
         std::vector<Group> groups;
         auto findGroup = [&](const char* title) -> Group*
@@ -1225,7 +1667,11 @@ namespace
             Group* g = findGroup(title);
             if (!g)
             {
-                groups.push_back({ title, {}, lib->GetMaskedID() == static_cast<uint32_t>(Gen_TextureLibrary) });
+                const uint32_t mid = lib->GetMaskedID();
+                groups.push_back({ title, {},
+                    mid == static_cast<uint32_t>(Gen_TextureLibrary),
+                    mid == static_cast<uint32_t>(Gen_AudioSampleLibrary) ||
+                    mid == static_cast<uint32_t>(Gen_AudioSampleBankLibrary) });
                 g = &groups.back();
             }
             g->libs.push_back(lib);
@@ -1254,11 +1700,17 @@ namespace
                     if (resName.empty())
                         resName = "(unnamed)";
 
-                    if (g.isTexture)
+                    if (g.isTexture || hdr.GetResourceType() == kCMResourceType_Texture)
                     {
                         const size_t texIdx = gTextureHeaders.size();
                         gTextureHeaders.push_back(hdr);
                         InsertTreeText(groupItem, Widen(resName), kTreeTexFlag | static_cast<LPARAM>(texIdx), false);
+                    }
+                    else if (g.isAudio || hdr.GetResourceType() == kCMResourceType_AudioSample)
+                    {
+                        const size_t audioIdx = gAudioHeaders.size();
+                        gAudioHeaders.push_back(hdr);
+                        InsertTreeText(groupItem, Widen(resName), kTreeAudioFlag | static_cast<LPARAM>(audioIdx), false);
                     }
                     else
                     {
@@ -1297,8 +1749,8 @@ namespace
         }
 
         wchar_t status[256];
-        swprintf_s(status, L"Simple view — %zu library group(s), %zu texture(s)%s",
-            groups.size(), gTextureHeaders.size(),
+        swprintf_s(status, L"Simple view — %zu group(s), %zu texture(s), %zu audio sample(s)%s",
+            groups.size(), gTextureHeaders.size(), gAudioHeaders.size(),
             gPackage->wasCompressed ? L" (was compressed)" : L"");
         SetStatus(status);
     }
@@ -1329,6 +1781,10 @@ namespace
         TreeView_DeleteAllItems(gTree);
         gChunkIndex.clear();
         gTextureHeaders.clear();
+        gAudioHeaders.clear();
+        gSelectedAudioIdx = -1;
+        gActiveAudioData = nullptr;
+        gActiveAudioName.clear();
         ClearList();
         ClearPreview();
         if (!gPackage)
@@ -1920,6 +2376,10 @@ namespace
             AppendMenuW(tex, MF_STRING, IDM_TEX_EXTRACT, L"&Extract texture (PNG)...");
             AppendMenuW(tex, MF_STRING, IDM_TEX_REPLACE, L"&Replace texture (PNG)...");
             AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(tex), L"&Texture");
+            HMENU audio = CreatePopupMenu();
+            AppendMenuW(audio, MF_STRING, IDM_AUDIO_EXTRACT, L"&Extract sample (WAV)...");
+            AppendMenuW(audio, MF_STRING, IDM_AUDIO_PLAY, L"&Play sample");
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(audio), L"&Audio");
             SetMenu(hwnd, menu);
 
             gTree = CreateWindowExW(WS_EX_CLIENTEDGE, WC_TREEVIEWW, L"",
@@ -2029,12 +2489,19 @@ namespace
                     ClearList();
                     ClearPreview();
                     gSelectedTexIdx = -1;
+                    gSelectedAudioIdx = -1;
+                    gActiveAudioName.clear();
                     SetStatus(L"Library group — expand and select a resource.");
                 }
                 else if (lp & kTreeTexFlag)
                 {
                     const size_t texIdx = static_cast<size_t>(lp & ~kTreeTexFlag);
                     ShowTextureResource(texIdx);
+                }
+                else if (lp & kTreeAudioFlag)
+                {
+                    const size_t audioIdx = static_cast<size_t>(lp & ~kTreeAudioFlag);
+                    ShowAudioResource(audioIdx);
                 }
                 else
                 {
@@ -2130,6 +2597,12 @@ namespace
                 return 0;
             case IDM_TEX_REPLACE:
                 ReplaceSelectedTexture();
+                return 0;
+            case IDM_AUDIO_EXTRACT:
+                ExtractActiveAudio();
+                return 0;
+            case IDM_AUDIO_PLAY:
+                PlayActiveAudio();
                 return 0;
             case IDM_VIEW_EXPAND:
             {

@@ -3,9 +3,9 @@
 #include "imgui_impl_opengl3.h"
 #include <GLFW/glfw3.h>
 #include <cstdio>
-#include "workspace.h"
-#include "app_menu.h"
-#include "file_dialog.h"
+#include "ui/workspace.h"
+#include "ui/app_menu.h"
+#include "platform/file_dialog.h"
 #include "pkzgui_font.h"
 
 namespace

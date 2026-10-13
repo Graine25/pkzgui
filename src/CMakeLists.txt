@@ -3,7 +3,7 @@ string(REGEX REPLACE "(..)" "0x\\1," PKZGUI_FONT_BYTES "${PKZGUI_FONT_HEX}")
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/pkzgui_font.h"
     "static const unsigned char FontData[] = {${PKZGUI_FONT_BYTES}};\n")
 
-add_library(miniaudio STATIC miniaudio_impl.c)
+add_library(miniaudio STATIC audio/miniaudio_impl.c)
 target_include_directories(miniaudio PUBLIC "${PROJECT_SOURCE_DIR}/external/miniaudio")
 target_link_libraries(miniaudio PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
 if(UNIX AND NOT APPLE)
@@ -34,11 +34,24 @@ if(APPLE OR WIN32)
     endif()
 endif()
 
-add_executable(pkzgui main.cpp workspace.cpp app_menu.cpp package_session.cpp file_dialog.cpp texture_preview.cpp resource_selection.cpp file_io.cpp texture_actions.cpp audio_sample.cpp audio_process.cpp audio_player.cpp workspace_actions.cpp)
+add_executable(pkzgui
+    main.cpp
+    ui/app_menu.cpp
+    ui/workspace.cpp
+    ui/workspace_actions.cpp
+    package/package_session.cpp
+    package/resource_selection.cpp
+    texture/texture_actions.cpp
+    texture/texture_preview.cpp
+    audio/audio_player.cpp
+    audio/audio_process.cpp
+    audio/audio_sample.cpp
+    platform/file_dialog.cpp
+    platform/file_io.cpp)
 if(APPLE)
-    target_sources(pkzgui PRIVATE menu_shortcut.m)
+    target_sources(pkzgui PRIVATE platform/menu_shortcut.m)
 endif()
-target_include_directories(pkzgui PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_include_directories(pkzgui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(pkzgui PRIVATE imgui pkzlib nfd Threads::Threads miniaudio)
 target_compile_definitions(pkzgui PRIVATE PKZGUI_FFMPEG_PATH="${PKZGUI_FFMPEG_EXECUTABLE}")
 if(EXISTS "${PKZGUI_FFMPEG_EXECUTABLE}")
@@ -55,17 +68,17 @@ set_target_properties(pkzgui PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 if(PKZGUI_BUILD_TESTS)
-    add_executable(package_session_test ../tests/package_session_test.cpp package_session.cpp file_io.cpp)
+    add_executable(package_session_test ../tests/package_session_test.cpp package/package_session.cpp platform/file_io.cpp)
     target_include_directories(package_session_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(package_session_test PRIVATE pkzlib Threads::Threads)
     set_target_properties(package_session_test PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
     add_test(NAME package_session COMMAND package_session_test "${CMAKE_CURRENT_BINARY_DIR}/test-packages")
-    add_executable(texture_actions_test ../tests/texture_actions_test.cpp package_session.cpp file_io.cpp resource_selection.cpp texture_actions.cpp)
+    add_executable(texture_actions_test ../tests/texture_actions_test.cpp package/package_session.cpp platform/file_io.cpp package/resource_selection.cpp texture/texture_actions.cpp)
     target_include_directories(texture_actions_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(texture_actions_test PRIVATE pkzlib Threads::Threads)
     set_target_properties(texture_actions_test PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
     add_test(NAME texture_actions COMMAND texture_actions_test "${CMAKE_CURRENT_BINARY_DIR}/test-textures")
-    add_executable(audio_sample_test ../tests/audio_sample_test.cpp audio_sample.cpp resource_selection.cpp audio_process.cpp file_io.cpp)
+    add_executable(audio_sample_test ../tests/audio_sample_test.cpp audio/audio_sample.cpp package/resource_selection.cpp audio/audio_process.cpp platform/file_io.cpp)
     target_include_directories(audio_sample_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(audio_sample_test PRIVATE pkzlib Threads::Threads)
     set_target_properties(audio_sample_test PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)

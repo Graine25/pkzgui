@@ -1,6 +1,6 @@
-#include "audio_player.h"
-#include "audio_process.h"
-#include "file_io.h"
+#include "audio/audio_player.h"
+#include "audio/audio_process.h"
+#include "platform/file_io.h"
 #include "miniaudio.h"
 #include <future>
 #include <chrono>

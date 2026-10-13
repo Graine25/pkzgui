@@ -1,6 +1,6 @@
-#include "texture_actions.h"
-#include "resource_selection.h"
-#include "file_io.h"
+#include "texture/texture_actions.h"
+#include "package/resource_selection.h"
+#include "platform/file_io.h"
 #include "BaseUtils/BUPng.h"
 
 RZTexture SelectedTexture(const PackageSession& session)

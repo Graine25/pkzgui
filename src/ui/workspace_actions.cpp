@@ -1,7 +1,7 @@
-#include "workspace.h"
-#include "file_dialog.h"
-#include "file_io.h"
-#include "texture_actions.h"
+#include "ui/workspace.h"
+#include "platform/file_dialog.h"
+#include "platform/file_io.h"
+#include "texture/texture_actions.h"
 #include <GLFW/glfw3.h>
 
 void Workspace::RefreshSelection()

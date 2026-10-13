@@ -1,9 +1,9 @@
 #pragma once
-#include "package_session.h"
-#include "texture_preview.h"
-#include "app_menu.h"
-#include "audio_player.h"
-#include "resource_selection.h"
+#include "package/package_session.h"
+#include "texture/texture_preview.h"
+#include "ui/app_menu.h"
+#include "audio/audio_player.h"
+#include "package/resource_selection.h"
 
 struct Workspace
 {

@@ -1,5 +1,5 @@
-#include "audio_sample.h"
-#include "resource_selection.h"
+#include "audio/audio_sample.h"
+#include "package/resource_selection.h"
 #include "Resource/RZTexture.h"
 #include <functional>
 

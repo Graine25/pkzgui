@@ -2,6 +2,7 @@
 #include "imgui.h"
 #include <algorithm>
 #include <cstdio>
+#include "texture_actions.h"
 
 namespace
 {
@@ -14,7 +15,11 @@ namespace
 
     void DrawChunk(const CMChunk& chunk, PackageSession& session, bool root = false)
     {
-        const std::string label = ToString(chunk.GetIDToEnum()) + " [" + Hex(chunk.GetMaskedID()) +
+        std::string title = ToString(chunk.GetIDToEnum());
+        if (chunk.GetMaskedID() == GenSub_Resource)
+            if (const CMChunk* header = chunk.FindChild(GenSub_ResourceHeader))
+                try { title = "\"" + CMChunkResourceHeader(*header).GetName() + "\""; } catch (const std::exception&) {}
+        const std::string label = title + " [" + Hex(chunk.GetMaskedID()) +
             "] v" + std::to_string(chunk.version) + (chunk.GetHasChildren() ? " folder " : " leaf ") +
             std::to_string(chunk.length);
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
@@ -52,13 +57,14 @@ namespace
 void Workspace::Draw()
 {
     session.PollLoad();
+    player.Poll(session.status, session.error);
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::Begin("Workspace", nullptr, ImGuiWindowFlags_NoDecoration |
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
-    ImGui::BeginDisabled(session.IsLoading());
+    ImGui::BeginDisabled(IsBusy());
 
     const float statusHeight = ImGui::GetFrameHeight();
     const float bodyHeight = std::max(1.0f, ImGui::GetContentRegionAvail().y - statusHeight);
@@ -77,6 +83,7 @@ void Workspace::Draw()
     if (ImGui::IsItemActive())
         splitX += ImGui::GetIO().MouseDelta.x;
     ImGui::SameLine(0, 0);
+    RefreshSelection();
     preview.Update(session);
     ImGui::BeginChild("Right pane", ImVec2(0, bodyHeight));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12, 10));
@@ -105,12 +112,41 @@ void Workspace::Draw()
             DrawRow("Offset", "", Hex(chunk.offset));
             DrawRow("Header Size", "", std::to_string(chunk.HeaderSize()));
             DrawRow("Children", "", std::to_string(chunk.children.size()));
+            if (resource)
+            {
+                DrawRow("name", "string", resource->GetName());
+                DrawRow("type", "", resource->GetResourceTypeName());
+                DrawRow("crc", "u32", Hex(resource->GetCRC()));
+                DrawRow("languageMask", "u32", Hex(resource->GetLanguageMask()));
+                DrawRow("qualityLevel", "u32", std::to_string(resource->GetQualityLevel()));
+                DrawRow("dataOffset", "u64", Hex(resource->GetDataOffset()));
+                DrawRow("postLoadDataCRC", "u32", Hex(resource->GetPostLoadDataCRC()));
+            }
             if (preview.active && preview.error.empty())
             {
                 DrawRow("Texture", "string", preview.name);
                 DrawRow("Width", "u32", std::to_string(preview.width));
                 DrawRow("Height", "u32", std::to_string(preview.height));
+                DrawRow("dimension", "u32", std::to_string(preview.descriptor.dimension));
+                DrawRow("mipLevels", "u32", std::to_string(preview.descriptor.mipLevels));
+                DrawRow("depth", "u32", std::to_string(preview.descriptor.depth));
+                DrawRow("d3dFormat", "u32", Hex(preview.descriptor.d3dFormat));
             }
+            if (audio)
+            {
+                DrawRow("formatTag", "u16", Hex(audio->format.formatTag) + " (XMA2)");
+                DrawRow("channels", "u16", std::to_string(audio->format.channels));
+                DrawRow("samplesPerSec", "u32", std::to_string(audio->format.samplesPerSec));
+                DrawRow("avgBytesPerSec", "u32", std::to_string(audio->format.avgBytesPerSec));
+                DrawRow("blockAlign", "u16", std::to_string(audio->format.blockAlign));
+                DrawRow("bitsPerSample", "u16", std::to_string(audio->format.bitsPerSample));
+                DrawRow("numStreams", "u16", std::to_string(audio->format.numStreams));
+                DrawRow("samplesEncoded", "u32", std::to_string(audio->format.samplesEncoded));
+                DrawRow("bytesPerBlock", "u32", std::to_string(audio->format.bytesPerBlock));
+                DrawRow("blockCount", "u16", std::to_string(audio->format.blockCount));
+                DrawRow("payload", "bytes", std::to_string(audio->data.size()));
+            }
+            if (!audioError.empty()) DrawRow("error", "", audioError);
         }
         ImGui::EndTable();
     }
@@ -133,18 +169,46 @@ void Workspace::Draw()
     ImGui::End();
     ImGui::PopStyleVar();
 
-    if (session.IsLoading())
+    if (IsBusy())
     {
         ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         ImGui::Begin("Loading", nullptr, ImGuiWindowFlags_NoDecoration |
             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings);
-        ImGui::TextUnformatted("Loading package...");
+        ImGui::TextUnformatted(session.IsLoading() ? "Loading package..." : "Decoding XMA2 with ffmpeg...");
         ImGui::End();
     }
 
+    if (!replacementPath.empty()) ImGui::OpenPopup("Replace texture");
+    if (ImGui::BeginPopupModal("Replace texture", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::InputInt("Width", &replacementWidth);
+        ImGui::InputInt("Height", &replacementHeight);
+        ImGui::TextUnformatted("Encoded in the original GPU format only.");
+        if (ImGui::Button("OK"))
+        {
+            try { ReplaceTexture(session, replacementPath, replacementWidth, replacementHeight); }
+            catch (const std::exception& ex) { session.error = ex.what(); }
+            replacementPath.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) { replacementPath.clear(); ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
+
+    if (confirmOpen) ImGui::OpenPopup("Open package");
+    if (ImGui::BeginPopupModal("Open package", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::TextUnformatted("Discard unsaved changes?");
+        if (ImGui::Button("Yes")) { approvedOpen = true; confirmOpen = false; ImGui::CloseCurrentPopup(); }
+        ImGui::SameLine();
+        if (ImGui::Button("No")) { confirmOpen = false; ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
+
     if (!session.error.empty())
-        ImGui::OpenPopup("Failed to open package");
-    if (ImGui::BeginPopupModal("Failed to open package", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        ImGui::OpenPopup("Operation failed");
+    if (ImGui::BeginPopupModal("Operation failed", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
     {
         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 40);
         ImGui::TextUnformatted(session.error.c_str());

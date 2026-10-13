@@ -17,7 +17,7 @@
 #endif
 
 #ifdef __APPLE__
-extern "C" void SetOpenPackageShortcut(void* item);
+extern "C" void SetMenuShortcut(void* item, const char* key);
 #endif
 
 namespace
@@ -29,16 +29,16 @@ namespace
         MenuAction action = MenuAction::None;
     };
     constexpr Item file[] = {
-        {"Open package...", "Ctrl+O", MenuAction::OpenPackage}, {"Save", "Ctrl+S"},
-        {"Save As..."}, {"Load schema..."},
+        {"Open package...", "Ctrl+O", MenuAction::OpenPackage}, {"Save", "Ctrl+S", MenuAction::Save},
+        {"Save As...", nullptr, MenuAction::SaveAs}, {"Load schema..."},
 #ifndef __APPLE__
         {nullptr}, {"Exit", nullptr, MenuAction::Exit},
 #endif
     };
     constexpr Item edit[] = {{"Edit selected field...", "Enter"}};
     constexpr Item view[] = {{"Expand all"}, {"Collapse all"}, {nullptr}, {"Simple view"}};
-    constexpr Item texture[] = {{"Extract texture (PNG)..."}, {"Replace texture (PNG)..."}};
-    constexpr Item audio[] = {{"Extract sample (WAV)..."}, {"Play sample"}};
+    constexpr Item texture[] = {{"Extract texture (PNG)...", nullptr, MenuAction::ExtractTexture}, {"Replace texture (PNG)...", nullptr, MenuAction::ReplaceTexture}};
+    constexpr Item audio[] = {{"Extract sample (WAV)...", nullptr, MenuAction::ExtractAudio}, {"Play sample", nullptr, MenuAction::PlayAudio}};
     struct Menu
     {
         const char* label;
@@ -58,6 +58,8 @@ namespace
 
 bool AppMenu::Init(GLFWwindow* window)
 {
+    enabled[static_cast<size_t>(MenuAction::OpenPackage)] = true;
+    enabled[static_cast<size_t>(MenuAction::Exit)] = true;
 #ifdef PKZGUI_NATIVE_MENUS
 #ifdef _WIN32
     nmb_setup(glfwGetWin32Window(window), nmb_SetupFlags_none);
@@ -89,16 +91,13 @@ bool AppMenu::Init(GLFWwindow* window)
             nmb_Handle handle = nmb_appendMenuItem(menu, caption.c_str());
             if (!handle)
                 break;
-            nmb_setMenuItemEnabled(handle, item.action != MenuAction::None);
-            if (item.action == MenuAction::Exit)
-                mExitItem = handle;
-            if (item.action == MenuAction::OpenPackage)
-            {
-                mOpenItem = handle;
+            const size_t action = static_cast<size_t>(item.action);
+            nmb_setMenuItemEnabled(handle, enabled[action]);
+            if (item.action != MenuAction::None) items[action] = handle;
 #ifdef __APPLE__
-                SetOpenPackageShortcut(handle);
+            if (item.action == MenuAction::OpenPackage) SetMenuShortcut(handle, "o");
+            if (item.action == MenuAction::Save) SetMenuShortcut(handle, "s");
 #endif
-            }
         }
     }
     if (*nmb_getLastError())
@@ -121,10 +120,12 @@ MenuAction AppMenu::DrawAndPoll()
     {
         if (event.event != nmb_EventType_itemTriggered)
             continue;
-        if (event.sender == mExitItem)
-            return MenuAction::Exit;
-        if (event.sender == mOpenItem)
-            action = MenuAction::OpenPackage;
+        for (size_t i = 1; i < items.size(); ++i)
+            if (items[i] == event.sender && enabled[i])
+            {
+                if (static_cast<MenuAction>(i) == MenuAction::Exit) return MenuAction::Exit;
+                action = static_cast<MenuAction>(i);
+            }
     }
 #else
     // GLFW cannot embed the library's GTK menu widget; retain the Linux menu.
@@ -139,7 +140,7 @@ MenuAction AppMenu::DrawAndPoll()
                 const Item& item = menu.items[i];
                 if (!item.label)
                     ImGui::Separator();
-                else if (ImGui::MenuItem(item.label, item.shortcut, false, item.action != MenuAction::None))
+                else if (ImGui::MenuItem(item.label, item.shortcut, false, enabled[static_cast<size_t>(item.action)]))
                     action = item.action;
             }
             ImGui::EndMenu();
@@ -157,6 +158,16 @@ void AppMenu::Shutdown()
         nmb_shutdown();
 #endif
     mInitialized = false;
-    mExitItem = nullptr;
-    mOpenItem = nullptr;
+    items.fill(nullptr);
+    enabled.fill(false);
+}
+
+void AppMenu::SetEnabled(MenuAction action, bool value)
+{
+    const size_t index = static_cast<size_t>(action);
+    if (enabled[index] == value) return;
+    enabled[index] = value;
+#ifdef PKZGUI_NATIVE_MENUS
+    if (items[index]) nmb_setMenuItemEnabled(items[index], value);
+#endif
 }

@@ -10,3 +10,9 @@
 [submodule "external/glfw"]
 	path = external/glfw
 	url = https://github.com/glfw/glfw.git
+[submodule "external/native-menu-bar"]
+	path = external/native-menu-bar
+	url = https://github.com/thomashope/native-menu-bar.git
+[submodule "external/nativefiledialog-extended"]
+	path = external/nativefiledialog-extended
+	url = https://github.com/btzy/nativefiledialog-extended.git

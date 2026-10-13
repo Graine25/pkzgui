@@ -1,7 +1,9 @@
 #pragma once
+#include "package_session.h"
 
 struct Workspace
 {
     float splitX = 340.0f;
-    bool Draw();
+    PackageSession session;
+    void Draw();
 };

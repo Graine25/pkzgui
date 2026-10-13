@@ -1,50 +1,54 @@
 #include "workspace.h"
 #include "imgui.h"
 #include <algorithm>
+#include <cstdio>
 
-bool Workspace::Draw()
+namespace
 {
-    bool exit = false;
-    if (ImGui::BeginMainMenuBar())
+    std::string Hex(uint64_t value)
     {
-        if (ImGui::BeginMenu("File"))
-        {
-            ImGui::MenuItem("Open package...", "Ctrl+O", false, false);
-            ImGui::MenuItem("Save", "Ctrl+S", false, false);
-            ImGui::MenuItem("Save As...", nullptr, false, false);
-            ImGui::MenuItem("Load schema...", nullptr, false, false);
-            ImGui::Separator();
-            exit = ImGui::MenuItem("Exit");
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Edit"))
-        {
-            ImGui::MenuItem("Edit selected field...", "Enter", false, false);
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("View"))
-        {
-            ImGui::MenuItem("Expand all", nullptr, false, false);
-            ImGui::MenuItem("Collapse all", nullptr, false, false);
-            ImGui::Separator();
-            ImGui::MenuItem("Simple view", nullptr, false, false);
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Texture"))
-        {
-            ImGui::MenuItem("Extract texture (PNG)...", nullptr, false, false);
-            ImGui::MenuItem("Replace texture (PNG)...", nullptr, false, false);
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Audio"))
-        {
-            ImGui::MenuItem("Extract sample (WAV)...", nullptr, false, false);
-            ImGui::MenuItem("Play sample", nullptr, false, false);
-            ImGui::EndMenu();
-        }
-        ImGui::EndMainMenuBar();
+        char text[32];
+        std::snprintf(text, sizeof(text), "0x%llX", static_cast<unsigned long long>(value));
+        return text;
     }
 
+    void DrawChunk(const CMChunk& chunk, PackageSession& session, bool root = false)
+    {
+        const std::string label = ToString(chunk.GetIDToEnum()) + " [" + Hex(chunk.GetMaskedID()) +
+            "] v" + std::to_string(chunk.version) + (chunk.GetHasChildren() ? " folder " : " leaf ") +
+            std::to_string(chunk.length);
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
+        if (chunk.children.empty())
+            flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+        if (root)
+            flags |= ImGuiTreeNodeFlags_DefaultOpen;
+        if (&chunk == session.selected)
+            flags |= ImGuiTreeNodeFlags_Selected;
+        const bool open = ImGui::TreeNodeEx(&chunk, flags, "%s", label.c_str());
+        if (ImGui::IsItemClicked())
+            session.selected = &chunk;
+        if (open && !chunk.children.empty())
+        {
+            for (const CMChunk& child : chunk.children)
+                DrawChunk(child, session);
+            ImGui::TreePop();
+        }
+    }
+
+    void DrawRow(const char* name, const char* type, const std::string& value)
+    {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted(name);
+        ImGui::TableSetColumnIndex(2);
+        ImGui::TextUnformatted(type);
+        ImGui::TableSetColumnIndex(3);
+        ImGui::TextUnformatted(value.c_str());
+    }
+}
+
+void Workspace::Draw()
+{
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
@@ -58,6 +62,9 @@ bool Workspace::Draw()
     constexpr float gap = 4.0f;
     splitX = std::clamp(splitX, std::min(120.0f, width * 0.4f), std::max(120.0f, width - 160.0f - gap));
     ImGui::BeginChild("Chunk tree", ImVec2(splitX, bodyHeight), ImGuiChildFlags_Borders);
+    if (session.package)
+        for (const CMChunk& chunk : session.package->rootChunks)
+            DrawChunk(chunk, session, true);
     ImGui::EndChild();
     ImGui::SameLine(0, 0);
     ImGui::InvisibleButton("Splitter", ImVec2(gap, bodyHeight));
@@ -78,14 +85,39 @@ bool Workspace::Draw()
         ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 480);
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableHeadersRow();
+        if (session.selected)
+        {
+            const CMChunk& chunk = *session.selected;
+            DrawRow("Chunk", "", ToString(chunk.GetIDToEnum()));
+            DrawRow("ID", "u32", Hex(chunk.GetMaskedID()));
+            DrawRow("Version", "u16", std::to_string(chunk.version));
+            DrawRow("Length", "", std::to_string(chunk.length));
+            DrawRow("Offset", "", Hex(chunk.offset));
+            DrawRow("Header Size", "", std::to_string(chunk.HeaderSize()));
+            DrawRow("Children", "", std::to_string(chunk.children.size()));
+        }
         ImGui::EndTable();
     }
     ImGui::EndChild();
 
     ImGui::BeginChild("Status", ImVec2(0, statusHeight), ImGuiChildFlags_Borders);
-    ImGui::TextUnformatted("No package loaded.");
+    ImGui::TextUnformatted(session.status.c_str());
     ImGui::EndChild();
     ImGui::End();
     ImGui::PopStyleVar();
-    return exit;
+
+    if (!session.error.empty())
+        ImGui::OpenPopup("Failed to open package");
+    if (ImGui::BeginPopupModal("Failed to open package", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 40);
+        ImGui::TextUnformatted(session.error.c_str());
+        ImGui::PopTextWrapPos();
+        if (ImGui::Button("Close"))
+        {
+            session.error.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 }

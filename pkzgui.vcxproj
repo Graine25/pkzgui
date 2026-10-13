@@ -187,11 +187,16 @@
   </ItemGroup>
   <ItemDefinitionGroup>
     <PostBuildEvent>
-      <Command>xcopy /E /I /Y /Q "$(ProjectDir)resources\*" "$(OutDir)"</Command>
-      <Message>Copying resources to output directory...</Message>
+      <Command>xcopy /E /I /Y /Q "$(PkzlibDir)schemas\*.xml" "$(OutDir)schemas\"
+if errorlevel 1 exit /b 1
+copy /Y "$(ProjectDir)external\FFmpeg\ffmpeg.exe" "$(OutDir)ffmpeg.exe"</Command>
+      <Message>Copying PKZLib schemas and built FFmpeg to output directory...</Message>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="CheckFfmpeg" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(ProjectDir)external\FFmpeg\ffmpeg.exe')" Text="Build external\FFmpeg first to produce ffmpeg.exe; see README.md." />
+  </Target>
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>

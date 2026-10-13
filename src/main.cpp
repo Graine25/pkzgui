@@ -92,7 +92,7 @@ int main(int argc, char** argv)
 
     Workspace workspace;
     if (argc > 1)
-        workspace.session.Load(argv[1]);
+        workspace.session.BeginLoad(argv[1]);
     while (!glfwWindowShouldClose(window))
     {
         glfwPollEvents();
@@ -112,13 +112,13 @@ int main(int argc, char** argv)
 #endif
         if (action == MenuAction::Exit)
             glfwSetWindowShouldClose(window, GLFW_TRUE);
-        else if (action == MenuAction::OpenPackage || openShortcut)
+        else if (!workspace.session.IsLoading() && (action == MenuAction::OpenPackage || openShortcut))
         {
             try
             {
                 const std::string path = PickPackage(window);
                 if (!path.empty())
-                    workspace.session.Load(path);
+                    workspace.session.BeginLoad(path);
             }
             catch (const std::exception& ex)
             {
@@ -137,6 +137,7 @@ int main(int argc, char** argv)
         glfwSwapBuffers(window);
     }
 
+    workspace.preview.Clear();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

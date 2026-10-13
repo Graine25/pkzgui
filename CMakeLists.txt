@@ -16,6 +16,7 @@ set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory(external/glfw EXCLUDE_FROM_ALL)
 find_package(OpenGL REQUIRED)
+find_package(Threads REQUIRED)
 
 set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/imgui")
 add_library(imgui STATIC

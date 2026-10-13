@@ -4,6 +4,8 @@
 #include <GLFW/glfw3.h>
 #include <cstdio>
 #include "workspace.h"
+#include "app_menu.h"
+#include "file_dialog.h"
 #include "pkzgui_font.h"
 
 namespace
@@ -14,7 +16,7 @@ namespace
     }
 }
 
-int main()
+int main(int argc, char** argv)
 {
     glfwSetErrorCallback(ReportGlfwError);
     if (!glfwInit())
@@ -76,7 +78,21 @@ int main()
         return 1;
     }
 
+    AppMenu menu;
+    if (!menu.Init(window))
+    {
+        menu.Shutdown();
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 1;
+    }
+
     Workspace workspace;
+    if (argc > 1)
+        workspace.session.Load(argv[1]);
     while (!glfwWindowShouldClose(window))
     {
         glfwPollEvents();
@@ -88,8 +104,28 @@ int main()
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
-        if (workspace.Draw())
+        MenuAction action = menu.DrawAndPoll();
+#ifdef __APPLE__
+        const bool openShortcut = io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_O, false);
+#else
+        const bool openShortcut = io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O, false);
+#endif
+        if (action == MenuAction::Exit)
             glfwSetWindowShouldClose(window, GLFW_TRUE);
+        else if (action == MenuAction::OpenPackage || openShortcut)
+        {
+            try
+            {
+                const std::string path = PickPackage(window);
+                if (!path.empty())
+                    workspace.session.Load(path);
+            }
+            catch (const std::exception& ex)
+            {
+                workspace.session.error = ex.what();
+            }
+        }
+        workspace.Draw();
         ImGui::Render();
 
         int width = 0, height = 0;
@@ -104,6 +140,7 @@ int main()
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
+    menu.Shutdown();
     glfwDestroyWindow(window);
     glfwTerminate();
     return 0;

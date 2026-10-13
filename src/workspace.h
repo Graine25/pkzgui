@@ -7,7 +7,8 @@
 
 struct Workspace
 {
-    float splitX = 340.0f;
+    float splitX = 280.0f;
+    float fieldsWidth = 340.0f, logHeight = 200.0f;
     PackageSession session;
     TexturePreview preview;
     AudioPlayer player;
@@ -26,4 +27,10 @@ private:
     const PKPackage* detailsPackage = nullptr;
     uint64_t detailsRevision = 0;
     void RefreshSelection();
+    void DrawFields();
+    void AddLog(const std::string& message);
+    std::vector<std::string> log;
+    std::string loggedStatus, loggedError;
+    bool loadingLogged = false;
+    bool logChanged = false;
 };

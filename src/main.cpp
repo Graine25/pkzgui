@@ -131,6 +131,7 @@ int main(int argc, char** argv)
         glfwSwapBuffers(window);
     }
 
+    workspace.player.Stop();
     workspace.preview.Clear();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();

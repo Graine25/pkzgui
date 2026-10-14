@@ -57,6 +57,7 @@ namespace
 void Workspace::Draw()
 {
     session.PollLoad();
+    player.Poll(session.status, session.error);
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
@@ -131,7 +132,21 @@ void Workspace::Draw()
                 DrawRow("depth", "u32", std::to_string(preview.descriptor.depth));
                 DrawRow("d3dFormat", "u32", Hex(preview.descriptor.d3dFormat));
             }
-
+            if (audio)
+            {
+                DrawRow("formatTag", "u16", Hex(audio->format.formatTag) + " (XMA2)");
+                DrawRow("channels", "u16", std::to_string(audio->format.channels));
+                DrawRow("samplesPerSec", "u32", std::to_string(audio->format.samplesPerSec));
+                DrawRow("avgBytesPerSec", "u32", std::to_string(audio->format.avgBytesPerSec));
+                DrawRow("blockAlign", "u16", std::to_string(audio->format.blockAlign));
+                DrawRow("bitsPerSample", "u16", std::to_string(audio->format.bitsPerSample));
+                DrawRow("numStreams", "u16", std::to_string(audio->format.numStreams));
+                DrawRow("samplesEncoded", "u32", std::to_string(audio->format.samplesEncoded));
+                DrawRow("bytesPerBlock", "u32", std::to_string(audio->format.bytesPerBlock));
+                DrawRow("blockCount", "u16", std::to_string(audio->format.blockCount));
+                DrawRow("payload", "bytes", std::to_string(audio->data.size()));
+            }
+            if (!audioError.empty()) DrawRow("error", "", audioError);
         }
         ImGui::EndTable();
     }
@@ -159,7 +174,7 @@ void Workspace::Draw()
         ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         ImGui::Begin("Loading", nullptr, ImGuiWindowFlags_NoDecoration |
             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings);
-        ImGui::TextUnformatted("Loading package...");
+        ImGui::TextUnformatted(session.IsLoading() ? "Loading package..." : "Decoding XMA2 with ffmpeg...");
         ImGui::End();
     }
 

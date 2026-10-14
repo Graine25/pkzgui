@@ -1,5 +1,6 @@
 #include "texture_preview.h"
-#include "Resource/RZTexture.h"
+#include "texture_actions.h"
+#include "resource_selection.h"
 #include "imgui.h"
 #include <GLFW/glfw3.h>
 #include <algorithm>
@@ -7,31 +8,6 @@
 #ifndef GL_CLAMP_TO_EDGE
 #define GL_CLAMP_TO_EDGE 0x812F
 #endif
-
-namespace
-{
-    const CMChunk* FindHeader(const CMChunk& node, const CMChunk* selected, const CMChunk* header = nullptr)
-    {
-        if (node.GetMaskedID() == GenSub_Resource)
-            header = node.FindChild(GenSub_ResourceHeader);
-        if (&node == selected)
-            return header;
-        for (const CMChunk& child : node.children)
-            if (const CMChunk* found = FindHeader(child, selected, header))
-                return found;
-        return nullptr;
-    }
-
-    bool Contains(const CMChunk& node, const CMChunk* selected)
-    {
-        if (&node == selected)
-            return true;
-        for (const CMChunk& child : node.children)
-            if (Contains(child, selected))
-                return true;
-        return false;
-    }
-}
 
 TexturePreview::~TexturePreview() { Clear(); }
 
@@ -50,35 +26,23 @@ void TexturePreview::Clear()
 
 void TexturePreview::Update(const PackageSession& session)
 {
-    if (selected == session.selected && package == session.package.get())
+    if (selected == session.selected && package == session.package.get() && revision == session.revision)
         return;
     Clear();
     selected = session.selected;
     package = session.package.get();
+    revision = session.revision;
     if (!selected || !package)
         return;
     try
     {
-        const CMChunk* header = nullptr;
-        for (const CMChunk& root : package->rootChunks)
-            if ((header = FindHeader(root, selected)))
-                break;
-        std::unique_ptr<CMChunkResourceHeader> resource;
-        if (header)
-            resource = std::make_unique<CMChunkResourceHeader>(*header);
-        else if (selected->GetMaskedID() == Texture_Data || selected->GetMaskedID() == Gen_PostLoadData)
-            for (const auto& candidate : RZTexture::Headers(*package))
-                if (const CMChunk* post = RZTexture::FindRootAtOffset(*package, candidate.GetDataOffset()))
-                    if (Contains(*post, selected))
-                    {
-                        resource = std::make_unique<CMChunkResourceHeader>(candidate);
-                        break;
-                    }
+        const auto resource = SelectedResource(*package, selected);
         if (!resource || resource->GetResourceType() != kCMResourceType_Texture)
             return;
         active = true;
         name = resource->GetName();
-        const RZTexture decoded = RZTexture::Load(*package, *resource);
+        const RZTexture decoded = SelectedTexture(session);
+        descriptor = decoded.desc;
         width = decoded.desc.width;
         height = decoded.desc.height;
         GLint maximum = 0;

@@ -110,22 +110,16 @@ int main(int argc, char** argv)
 #else
         const bool openShortcut = io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O, false);
 #endif
-        if (action == MenuAction::Exit)
-            glfwSetWindowShouldClose(window, GLFW_TRUE);
-        else if (!workspace.session.IsLoading() && (action == MenuAction::OpenPackage || openShortcut))
-        {
-            try
-            {
-                const std::string path = PickPackage(window);
-                if (!path.empty())
-                    workspace.session.BeginLoad(path);
-            }
-            catch (const std::exception& ex)
-            {
-                workspace.session.error = ex.what();
-            }
-        }
+#ifdef __APPLE__
+        const bool saveShortcut = io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_S, false);
+#else
+        const bool saveShortcut = io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false);
+#endif
+        if (workspace.approvedOpen || openShortcut) action = MenuAction::OpenPackage;
+        else if (saveShortcut) action = MenuAction::Save;
+        workspace.HandleAction(action, window);
         workspace.Draw();
+        workspace.UpdateMenus(menu);
         ImGui::Render();
 
         int width = 0, height = 0;

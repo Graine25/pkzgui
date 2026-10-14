@@ -403,3 +403,7 @@ FodyWeavers.xsd
 # CMake build trees
 /build/
 /build-*/
+*.filters
+*.vcxproj
+*.stamp
+*.depend

@@ -1,8 +1,8 @@
-#include "workspace.h"
+#include "ui/workspace.h"
 #include "imgui.h"
 #include <algorithm>
 #include <cstdio>
-#include "texture_actions.h"
+#include "texture/texture_actions.h"
 #include <GLFW/glfw3.h>
 
 namespace

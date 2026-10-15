@@ -1,6 +1,6 @@
-#include "texture_preview.h"
-#include "texture_actions.h"
-#include "resource_selection.h"
+#include "texture/texture_preview.h"
+#include "texture/texture_actions.h"
+#include "package/resource_selection.h"
 #include "imgui.h"
 #include <GLFW/glfw3.h>
 #include <algorithm>

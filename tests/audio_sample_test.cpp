@@ -1,6 +1,6 @@
-#include "audio_sample.h"
-#include "audio_process.h"
-#include "file_io.h"
+#include "audio/audio_sample.h"
+#include "audio/audio_process.h"
+#include "platform/file_io.h"
 #include <iostream>
 
 void Check(bool ok, const char* message) { if (!ok) throw std::runtime_error(message); }

@@ -1,5 +1,5 @@
 #pragma once
-#include "audio_sample.h"
+#include "audio/audio_sample.h"
 #include <memory>
 
 class AudioPlayer

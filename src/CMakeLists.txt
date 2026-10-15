@@ -36,6 +36,7 @@ endif()
 
 add_executable(pkzgui
     main.cpp
+    model/model_preview.cpp
     ui/app_menu.cpp
     ui/workspace.cpp
     ui/workspace_actions.cpp

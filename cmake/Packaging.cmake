@@ -14,7 +14,7 @@ if(WIN32)
         RUNTIME DESTINATION . LIBRARY DESTINATION .)
 endif()
 
-install(FILES README.md docs/3d-viewer.md DESTINATION docs)
+install(FILES README.md DESTINATION docs)
 install(DIRECTORY licenses/ DESTINATION licenses)
 foreach(dependency imgui glfw nativefiledialog-extended miniaudio FFmpeg
         PKZLib/contrib/zlib PKZLib/thirdparty/textures/libsquish

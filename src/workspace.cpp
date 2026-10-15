@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 #include "texture_actions.h"
+#include <GLFW/glfw3.h>
 
 namespace
 {
@@ -16,10 +17,14 @@ namespace
     void DrawChunk(const CMChunk& chunk, PackageSession& session, bool root = false)
     {
         std::string title = ToString(chunk.GetIDToEnum());
+        bool namedResource = false;
         if (chunk.GetMaskedID() == GenSub_Resource)
             if (const CMChunk* header = chunk.FindChild(GenSub_ResourceHeader))
-                try { title = "\"" + CMChunkResourceHeader(*header).GetName() + "\""; } catch (const std::exception&) {}
-        const std::string label = title + " [" + Hex(chunk.GetMaskedID()) +
+                try {
+                    const auto name = CMChunkResourceHeader(*header).GetName();
+                    if (!name.empty()) { title = name; namedResource = true; }
+                } catch (const std::exception&) {}
+        const std::string label = namedResource ? title : title + " [" + Hex(chunk.GetMaskedID()) +
             "] v" + std::to_string(chunk.version) + (chunk.GetHasChildren() ? " folder " : " leaf ") +
             std::to_string(chunk.length);
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
@@ -45,61 +50,32 @@ namespace
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
         ImGui::TextUnformatted(name);
+        ImGui::SetItemTooltip("%s", name);
         ImGui::TableSetColumnIndex(2);
         ImGui::TextUnformatted(type);
         ImGui::TableSetColumnIndex(3);
-        ImGui::PushTextWrapPos(0);
         ImGui::TextUnformatted(value.c_str());
-        ImGui::PopTextWrapPos();
+        ImGui::SetItemTooltip("%s", value.c_str());
     }
 }
 
-void Workspace::Draw()
+void Workspace::DrawFields()
 {
-    session.PollLoad();
-    player.Poll(session.status, session.error);
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(viewport->WorkSize);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::Begin("Workspace", nullptr, ImGuiWindowFlags_NoDecoration |
-        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
-    ImGui::BeginDisabled(IsBusy());
-
-    const float statusHeight = ImGui::GetFrameHeight();
-    const float bodyHeight = std::max(1.0f, ImGui::GetContentRegionAvail().y - statusHeight);
-    const float width = ImGui::GetContentRegionAvail().x;
-    constexpr float gap = 4.0f;
-    splitX = std::clamp(splitX, std::min(120.0f, width * 0.4f), std::max(120.0f, width - 160.0f - gap));
-    ImGui::BeginChild("Chunk tree", ImVec2(splitX, bodyHeight), ImGuiChildFlags_Borders);
-    if (session.package)
-        for (const CMChunk& chunk : session.package->rootChunks)
-            DrawChunk(chunk, session, true);
-    ImGui::EndChild();
-    ImGui::SameLine(0, 0);
-    ImGui::InvisibleButton("Splitter", ImVec2(gap, bodyHeight));
-    if (ImGui::IsItemHovered() || ImGui::IsItemActive())
-        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-    if (ImGui::IsItemActive())
-        splitX += ImGui::GetIO().MouseDelta.x;
-    ImGui::SameLine(0, 0);
-    RefreshSelection();
-    preview.Update(session);
-    ImGui::BeginChild("Right pane", ImVec2(0, bodyHeight));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12, 10));
-    const float fieldsHeight = preview.active ? bodyHeight * 0.4f : 0;
-    ImGui::BeginChild("Fields", ImVec2(0, fieldsHeight),
-        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
-    ImGui::TextUnformatted(session.selected ? ToString(session.selected->GetIDToEnum()).c_str() : "Chunk details");
-    ImGui::Spacing();
-    if (ImGui::BeginTable("Field table", 4, ImGuiTableFlags_Resizable |
+    ImGui::TextUnformatted("Fields");
+    if (resource) {
+        ImGui::TextUnformatted(resource->GetName().c_str());
+        ImGui::SetItemTooltip("%s", resource->GetName().c_str());
+    }
+    else if (session.selected) ImGui::TextUnformatted(ToString(session.selected->GetIDToEnum()).c_str());
+    ImGui::Separator();
+    if (ImGui::BeginTable("Field table##single-line", 4,
         ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_NoBordersInBody |
-        ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp, ImVec2(0, 0)))
+        ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit, ImVec2(0, 0)))
     {
-        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 0.30f);
-        ImGui::TableSetupColumn("Offset", ImGuiTableColumnFlags_WidthStretch, 0.12f);
-        ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthStretch, 0.16f);
-        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.42f);
+        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("Offset", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed);
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableHeadersRow();
         if (session.selected)
@@ -150,22 +126,105 @@ void Workspace::Draw()
         }
         ImGui::EndTable();
     }
-    ImGui::EndChild();
-    if (preview.active)
-    {
-        ImGui::Dummy(ImVec2(0, gap));
-        ImGui::BeginChild("Texture preview", ImVec2(0, 0),
-            ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
-        preview.Draw();
-        ImGui::EndChild();
-    }
 
+}
+
+void Workspace::AddLog(const std::string& message)
+{
+    log.push_back(message);
+    if (log.size() > 200) log.erase(log.begin());
+    logChanged = true;
+}
+
+void Workspace::Draw()
+{
+    session.PollLoad();
+    player.Poll(session.status, session.error);
+    if (session.status != loggedStatus) { AddLog(session.status); loggedStatus = session.status; }
+    if (session.IsLoading() && !loadingLogged) AddLog("Loading package...");
+    loadingLogged = session.IsLoading();
+    if (session.error != loggedError) {
+        if (!session.error.empty()) AddLog("Error: " + session.error);
+        loggedError = session.error;
+    }
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->WorkPos);
+    ImGui::SetNextWindowSize(viewport->WorkSize);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::Begin("Workspace", nullptr, ImGuiWindowFlags_NoDecoration |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+    const float statusHeight = ImGui::GetFrameHeight();
+    const float bodyHeight = std::max(1.0f, ImGui::GetContentRegionAvail().y - statusHeight);
+    const float width = ImGui::GetContentRegionAvail().x;
+    constexpr float gap = 4;
+    fieldsWidth = std::clamp(fieldsWidth, 180.0f, std::max(180.0f, width * 0.45f));
+    const float leftWidth = std::max(1.0f, width - fieldsWidth - gap);
+    splitX = std::clamp(splitX, 100.0f, std::max(100.0f, leftWidth - 120));
+    logHeight = std::clamp(logHeight, 60.0f, std::max(60.0f, bodyHeight - 160));
+    ImGui::BeginChild("Main panels", ImVec2(leftWidth, bodyHeight));
+    ImGui::BeginChild("Upper panels", ImVec2(0, bodyHeight - logHeight - gap));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
+    ImGui::BeginDisabled(IsBusy());
+    ImGui::BeginChild("Chunks", ImVec2(splitX, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
+        ImGuiWindowFlags_HorizontalScrollbar);
+    ImGui::TextUnformatted("Chunks");
+    ImGui::Separator();
+    if (session.package)
+        for (const CMChunk& chunk : session.package->rootChunks) DrawChunk(chunk, session, true);
+    ImGui::EndChild();
+    ImGui::SameLine(0, 0);
+    ImGui::InvisibleButton("Chunk splitter", ImVec2(gap, ImGui::GetContentRegionAvail().y));
+    if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    if (ImGui::IsItemActive()) splitX += ImGui::GetIO().MouseDelta.x;
+    ImGui::SameLine(0, 0);
+    RefreshSelection();
+    preview.Update(session);
+    ImGui::BeginChild("Resource view", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::TextUnformatted("Resource view");
+    ImGui::Separator();
+    if (preview.active) preview.Draw();
+    else if (audio)
+    {
+        ImGui::TextWrapped("%s", audio->name.c_str());
+        ImGui::Text("%u Hz, %u channels", audio->format.samplesPerSec, audio->format.channels);
+        if (ImGui::Button("Play sample")) HandleAction(MenuAction::PlayAudio, glfwGetCurrentContext());
+        ImGui::SameLine();
+        if (ImGui::Button("Extract WAV...")) HandleAction(MenuAction::ExtractAudio, glfwGetCurrentContext());
+    }
+    else ImGui::TextDisabled("Select a texture or audio sample.");
+    ImGui::EndChild();
+    ImGui::EndDisabled();
     ImGui::PopStyleVar();
     ImGui::EndChild();
+    ImGui::InvisibleButton("Log splitter", ImVec2(leftWidth, gap));
+    if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+    if (ImGui::IsItemActive()) logHeight -= ImGui::GetIO().MouseDelta.y;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
+    ImGui::BeginChild("Debug log", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+    const bool follow = ImGui::GetScrollY() >= ImGui::GetScrollMaxY();
+    ImGui::TextUnformatted("Debug log");
+    ImGui::Separator();
+    for (const auto& message : log) ImGui::TextWrapped("%s", message.c_str());
+    if (logChanged && follow) ImGui::SetScrollHereY(1);
+    logChanged = false;
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::EndChild();
+    ImGui::SameLine(0, 0);
+    ImGui::InvisibleButton("Fields splitter", ImVec2(gap, bodyHeight));
+    if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    if (ImGui::IsItemActive()) fieldsWidth -= ImGui::GetIO().MouseDelta.x;
+    ImGui::SameLine(0, 0);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
+    ImGui::BeginChild("Fields", ImVec2(0, bodyHeight), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::BeginDisabled(IsBusy());
+    DrawFields();
+    ImGui::EndDisabled();
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
     ImGui::BeginChild("Status", ImVec2(0, statusHeight), ImGuiChildFlags_Borders);
     ImGui::TextUnformatted(session.IsLoading() ? "Loading package..." : session.status.c_str());
     ImGui::EndChild();
-    ImGui::EndDisabled();
     ImGui::End();
     ImGui::PopStyleVar();
 
@@ -186,7 +245,11 @@ void Workspace::Draw()
         ImGui::TextUnformatted("Encoded in the original GPU format only.");
         if (ImGui::Button("OK"))
         {
-            try { ReplaceTexture(session, replacementPath, replacementWidth, replacementHeight); }
+            try {
+                ReplaceTexture(session, replacementPath, replacementWidth, replacementHeight);
+                AddLog(session.status);
+                loggedStatus = session.status;
+            }
             catch (const std::exception& ex) { session.error = ex.what(); }
             replacementPath.clear();
             ImGui::CloseCurrentPopup();

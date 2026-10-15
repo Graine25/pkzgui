@@ -58,7 +58,7 @@ int main(int argc, char** argv)
     style.WindowRounding = style.ChildRounding = style.FrameRounding = 0;
     style.ItemSpacing = ImVec2(8, 0);
     style.Colors[ImGuiCol_WindowBg] = ImVec4(1, 1, 1, 1);
-    style.Colors[ImGuiCol_ChildBg] = ImVec4(1, 1, 1, 1);
+    style.Colors[ImGuiCol_ChildBg] = ImVec4(0.94f, 0.94f, 0.94f, 1);
     style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.96f, 0.96f, 0.96f, 1);
     style.Colors[ImGuiCol_TableHeaderBg] = ImVec4(1, 1, 1, 1);
 

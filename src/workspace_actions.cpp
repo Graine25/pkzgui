@@ -26,7 +26,7 @@ void Workspace::RefreshSelection()
 
 void Workspace::UpdateMenus(AppMenu& menu)
 {
-    const bool ready = !IsBusy() && replacementPath.empty() && !confirmOpen;
+    const bool ready = !IsBusy() && replacementPath.empty() && !confirmOpen && session.error.empty();
     menu.SetEnabled(MenuAction::OpenPackage, ready);
     menu.SetEnabled(MenuAction::Save, ready && session.package != nullptr);
     menu.SetEnabled(MenuAction::SaveAs, ready && session.package != nullptr);
@@ -39,7 +39,7 @@ void Workspace::UpdateMenus(AppMenu& menu)
 void Workspace::HandleAction(MenuAction action, GLFWwindow* window)
 {
     if (action == MenuAction::Exit) { glfwSetWindowShouldClose(window, GLFW_TRUE); return; }
-    if (IsBusy() || !replacementPath.empty() || confirmOpen) return;
+    if (IsBusy() || !replacementPath.empty() || confirmOpen || !session.error.empty()) return;
     try
     {
         switch (action)

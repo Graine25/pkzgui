@@ -457,7 +457,11 @@ void ModelPreview::DestroyGL()
         gl3::DeleteBuffers(4, buffers);
     }
     gpuMeshes.clear();
-    for (auto& texture : materialTextures) { if (texture.texture) glDeleteTextures(1, &texture.texture); texture.texture = 0; }
+    for (auto& texture : materialTextures) {
+        if (texture.texture) glDeleteTextures(1, &texture.texture);
+        if (texture.retexture) glDeleteTextures(1, &texture.retexture);
+        texture.texture = texture.retexture = 0;
+    }
     textureBytes = 0;
     if (whiteTexture) glDeleteTextures(1, &whiteTexture);
     whiteTexture = 0;
@@ -863,6 +867,7 @@ unsigned int ModelPreview::MaterialTextureID(size_t index)
 {
     if (index >= materials.size()) return 0;
     auto& cached = materialTextures[index];
+    if (cached.useRetexture && cached.retexture) return cached.retexture;
     if (cached.attempted) return cached.texture;
     cached.attempted = true;
     if (!materials[index].texture || !package) return 0;
@@ -883,12 +888,17 @@ unsigned int ModelPreview::MaterialTextureID(size_t index)
 void ModelPreview::LoadPNG(size_t index, const std::string& path)
 {
     if (index >= materials.size()) throw std::runtime_error("Select a material first.");
-    const auto image = BUPng::Decode(ReadFile(std::filesystem::u8path(path)));
+    const auto png = ReadFile(std::filesystem::u8path(path));
+    const auto image = BUPng::Decode(png);
     auto& cached = materialTextures[index];
     const auto texture = UploadTexture(image.rgba, image.width, image.height);
-    if (cached.texture) glDeleteTextures(1, &cached.texture);
-    textureBytes -= cached.bytes;
-    cached = {texture, true, size_t(image.width) * image.height * 4, path, {}};
+    if (cached.retexture) glDeleteTextures(1, &cached.retexture);
+    textureBytes -= cached.retextureBytes;
+    cached.retexture = texture;
+    cached.retextureBytes = size_t(image.width) * image.height * 4;
+    cached.png = path;
+    cached.pngCRC = BUCRC().GenerateRaw(png.data(), png.size());
+    cached.useRetexture = true;
     Log("PNG preview for " + materials[index].name + ": " + path + " (package unchanged).");
     textured = true;
     renderDirty = true;
@@ -897,13 +907,32 @@ void ModelPreview::LoadPNG(size_t index, const std::string& path)
 void ModelPreview::UsePackageTexture(size_t index)
 {
     if (index >= materialTextures.size()) return;
-    auto& cached = materialTextures[index];
-    if (cached.texture) glDeleteTextures(1, &cached.texture);
-    textureBytes -= cached.bytes;
-    cached = {};
-    Log("Restored package texture for " + materials[index].name + ".");
+    materialTextures[index].useRetexture = false;
+    Log("Using package texture for " + materials[index].name + ".");
     textured = true;
     renderDirty = true;
+}
+
+void ModelPreview::UseRetexture(size_t index)
+{
+    if (index >= materialTextures.size() || !materialTextures[index].retexture)
+        throw std::runtime_error("Load a retexture PNG first.");
+    materialTextures[index].useRetexture = true;
+    textured = true;
+    renderDirty = true;
+    Log("Using retexture for " + materials[index].name + ".");
+}
+
+void ModelPreview::ClearRetexture(size_t index)
+{
+    if (index >= materialTextures.size()) return;
+    auto& cached = materialTextures[index];
+    if (cached.retexture) glDeleteTextures(1, &cached.retexture);
+    textureBytes -= cached.retextureBytes;
+    cached.retexture = 0;
+    cached.retextureBytes = 0;
+    cached.png.clear();
+    UsePackageTexture(index);
 }
 
 void ModelPreview::ApplyPNG(PackageSession& session, size_t index)
@@ -911,7 +940,10 @@ void ModelPreview::ApplyPNG(PackageSession& session, size_t index)
     if (session.package.get() != package || session.revision != revision || index >= materials.size() || !materials[index].texture)
         throw std::runtime_error("Select a material with a texture in this package first.");
     const auto& cached = materialTextures[index];
-    if (cached.png.empty()) throw std::runtime_error("Preview a replacement PNG first.");
+    if (cached.png.empty()) throw std::runtime_error("Load a retexture PNG first.");
+    const auto png = ReadFile(std::filesystem::u8path(cached.png));
+    if (BUCRC().GenerateRaw(png.data(), png.size()) != cached.pngCRC)
+        throw std::runtime_error("Retexture changed on disk. Reload PNG to preview it before applying.");
     const auto texture = RZTexture::Load(*package, *materials[index].texture);
     ReplaceTexture(session, *materials[index].texture, cached.png, texture.desc.width, texture.desc.height);
     renderDirty = true;

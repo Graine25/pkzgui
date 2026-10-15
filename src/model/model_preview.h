@@ -19,6 +19,8 @@ struct ModelPreview
     void SetTextured(bool enabled) { textured = enabled; renderDirty = true; }
     void LoadPNG(size_t material, const std::string& path);
     void UsePackageTexture(size_t material);
+    void UseRetexture(size_t material);
+    void ClearRetexture(size_t material);
     void ApplyPNG(PackageSession& session, size_t material);
     const std::vector<ModelMesh>& Meshes() const { return meshes; }
     const std::vector<ModelMaterial>& Materials() const { return materials; }
@@ -36,14 +38,16 @@ private:
     std::vector<ModelMesh> meshes;
     std::vector<ModelMaterial> materials;
     struct MaterialTexture {
-        unsigned int texture = 0;
+        unsigned int texture = 0, retexture = 0;
         bool attempted = false;
-        size_t bytes = 0;
+        size_t bytes = 0, retextureBytes = 0;
+        bool useRetexture = false;
+        uint32_t pngCRC = 0;
         std::string png, error;
     };
     std::vector<MaterialTexture> materialTextures;
     size_t textureBytes = 0;
-    bool textured = false, twoSided = true;
+    bool textured = false, twoSided = true, hudCollapsed = false;
     int materialIndex = 0;
     float uvDivisor = 1024.f;
     std::vector<std::string> logMessages;

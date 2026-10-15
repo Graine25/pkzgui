@@ -126,6 +126,12 @@ void MaterialTests()
     exported.passes.push_back({0,0,1,record,{}});
     const auto container = ModelShaderContainer(exported,record);
     Check(container.size() == 40 && container[0] == 0x10 && container[36] == 0x12, "Shader export did not concatenate the virtual and physical container");
+    const auto exportPath = (std::filesystem::temp_directory_path()/"pkzgui-model-shader-test.bin").u8string();
+    ExportModelShaders(exported,exportPath);
+    Check(ReadFile(exportPath) == container, "Exported shader bytes differ");
+    const auto json = ReadFile(exportPath+".json");
+    Check(std::string(json.begin(),json.end()).find("\\u000a") != std::string::npos, "Shader binding manifest contains an unescaped control character");
+    std::filesystem::remove(exportPath); std::filesystem::remove(exportPath+".json");
     image.data.pop_back(); bool rejected = false;
     try { ModelShaderContainer(exported,record); } catch (const std::exception&) { rejected = true; }
     Check(rejected, "Truncated shader physical data was exported");
@@ -322,6 +328,26 @@ int GLTests()
     Check(!textured.dirty && textured.selected == selected && before == RZTexture::Load(*textured.package,*preview.Materials()[0].texture).DecodeLevel0(), "Preview-only override changed the package");
     preview.UsePackageTexture(0); draw();
     Check(colorCount(true) > 100, "Use package texture did not restore the original image");
+    preview.UseRetexture(0); draw();
+    Check(colorCount(false) > 100 && !textured.dirty, "Switching back to the retexture lost the PNG or modified the package");
+    preview.SetTextured(false); draw();
+    Check(colorCount(false) < 100 && !textured.dirty, "Texture visibility toggle did not hide the retexture");
+    preview.SetTextured(true); draw();
+    Check(colorCount(false) > 100, "Texture visibility toggle lost the active retexture");
+    preview.ClearRetexture(0); draw();
+    Check(colorCount(true) > 100, "Clearing a retexture did not restore the package texture");
+    bool missingRetexture = false;
+    try { preview.UseRetexture(0); } catch (const std::exception&) { missingRetexture = true; }
+    Check(missingRetexture, "A cleared retexture remained selectable");
+    preview.LoadPNG(0,png.u8string());
+    const uint8_t edited[4] = {0,255,0,255};
+    WriteFile(png,BUPng::EncodeRGBA8(edited,1,1));
+    bool needsReload = false;
+    try { preview.ApplyPNG(textured,0); } catch (const std::exception&) { needsReload = true; }
+    Check(needsReload && !textured.dirty, "A PNG edited after preview was applied without reloading");
+    preview.LoadPNG(0,png.u8string()); draw();
+    Check(colorCount(true) > 100, "Reloading an edited PNG did not refresh the preview");
+    WriteFile(png,BUPng::EncodeRGBA8(replacement.data(),1,1));
     preview.LoadPNG(0,png.u8string()); preview.ApplyPNG(textured,0);
     Check(textured.dirty && textured.selected == selected, "Applying a model texture changed selection or failed to mark dirty");
     const auto changed = RZTexture::Load(*textured.package,*preview.Materials()[0].texture).DecodeLevel0();

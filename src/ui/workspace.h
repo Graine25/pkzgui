@@ -9,7 +9,7 @@
 struct Workspace
 {
     float splitX = 280.0f;
-    float fieldsWidth = 340.0f, logHeight = 200.0f;
+    float fieldsWidth = 340.0f, logHeight = 200.0f, modelActionsHeight = 280.0f;
     PackageSession session;
     TexturePreview preview;
     ModelPreview modelPreview;

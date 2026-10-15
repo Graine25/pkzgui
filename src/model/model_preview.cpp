@@ -1,4 +1,4 @@
-﻿#include "model/model_preview.h"
+#include "model/model_preview.h"
 #include "package/resource_selection.h"
 #include "imgui.h"
 #include <GLFW/glfw3.h>
@@ -144,59 +144,113 @@ namespace gl3 {
 
     static bool loaded = false;
 
-    static void* Load(const char* name)
+    template<class T> static void Load(T& function, const char* name)
     {
-        return reinterpret_cast<void*>(glfwGetProcAddress(name));
+        function = reinterpret_cast<T>(glfwGetProcAddress(name));
+        if (!function) throw std::runtime_error(std::string("Missing OpenGL entry point: ") + name);
     }
 
     static void EnsureLoaded()
     {
         if (loaded) return;
-#define LOAD(name) do { name = reinterpret_cast<decltype(name)>(Load("gl" #name)); if (!name) throw std::runtime_error("Missing GL entry: gl" #name); } while (0)
-#undef LOAD
-        CreateShader = reinterpret_cast<PFN_glCreateShader>(Load("glCreateShader"));
-        ShaderSource = reinterpret_cast<PFN_glShaderSource>(Load("glShaderSource"));
-        CompileShaderFn = reinterpret_cast<PFN_glCompileShader>(Load("glCompileShader"));
-        GetShaderiv = reinterpret_cast<PFN_glGetShaderiv>(Load("glGetShaderiv"));
-        GetShaderInfoLog = reinterpret_cast<PFN_glGetShaderInfoLog>(Load("glGetShaderInfoLog"));
-        DeleteShader = reinterpret_cast<PFN_glDeleteShader>(Load("glDeleteShader"));
-        CreateProgram = reinterpret_cast<PFN_glCreateProgram>(Load("glCreateProgram"));
-        AttachShader = reinterpret_cast<PFN_glAttachShader>(Load("glAttachShader"));
-        BindAttribLocation = reinterpret_cast<PFN_glBindAttribLocation>(Load("glBindAttribLocation"));
-        LinkProgram = reinterpret_cast<PFN_glLinkProgram>(Load("glLinkProgram"));
-        GetProgramiv = reinterpret_cast<PFN_glGetProgramiv>(Load("glGetProgramiv"));
-        GetProgramInfoLog = reinterpret_cast<PFN_glGetProgramInfoLog>(Load("glGetProgramInfoLog"));
-        DeleteProgram = reinterpret_cast<PFN_glDeleteProgram>(Load("glDeleteProgram"));
-        UseProgram = reinterpret_cast<PFN_glUseProgram>(Load("glUseProgram"));
-        GetUniformLocation = reinterpret_cast<PFN_glGetUniformLocation>(Load("glGetUniformLocation"));
-        UniformMatrix4fv = reinterpret_cast<PFN_glUniformMatrix4fv>(Load("glUniformMatrix4fv"));
-        Uniform3f = reinterpret_cast<PFN_glUniform3f>(Load("glUniform3f"));
-        GenBuffers = reinterpret_cast<PFN_glGenBuffers>(Load("glGenBuffers"));
-        BindBuffer = reinterpret_cast<PFN_glBindBuffer>(Load("glBindBuffer"));
-        BufferData = reinterpret_cast<PFN_glBufferData>(Load("glBufferData"));
-        DeleteBuffers = reinterpret_cast<PFN_glDeleteBuffers>(Load("glDeleteBuffers"));
-        EnableVertexAttribArray = reinterpret_cast<PFN_glEnableVertexAttribArray>(Load("glEnableVertexAttribArray"));
-        DisableVertexAttribArray = reinterpret_cast<PFN_glDisableVertexAttribArray>(Load("glDisableVertexAttribArray"));
-        VertexAttribPointer = reinterpret_cast<PFN_glVertexAttribPointer>(Load("glVertexAttribPointer"));
-        GenVertexArrays = reinterpret_cast<PFN_glGenVertexArrays>(Load("glGenVertexArrays"));
-        BindVertexArray = reinterpret_cast<PFN_glBindVertexArray>(Load("glBindVertexArray"));
-        DeleteVertexArrays = reinterpret_cast<PFN_glDeleteVertexArrays>(Load("glDeleteVertexArrays"));
-        GenFramebuffers = reinterpret_cast<PFN_glGenFramebuffers>(Load("glGenFramebuffers"));
-        BindFramebuffer = reinterpret_cast<PFN_glBindFramebuffer>(Load("glBindFramebuffer"));
-        DeleteFramebuffers = reinterpret_cast<PFN_glDeleteFramebuffers>(Load("glDeleteFramebuffers"));
-        FramebufferTexture2D = reinterpret_cast<PFN_glFramebufferTexture2D>(Load("glFramebufferTexture2D"));
-        CheckFramebufferStatus = reinterpret_cast<PFN_glCheckFramebufferStatus>(Load("glCheckFramebufferStatus"));
-        GenRenderbuffers = reinterpret_cast<PFN_glGenRenderbuffers>(Load("glGenRenderbuffers"));
-        BindRenderbuffer = reinterpret_cast<PFN_glBindRenderbuffer>(Load("glBindRenderbuffer"));
-        DeleteRenderbuffers = reinterpret_cast<PFN_glDeleteRenderbuffers>(Load("glDeleteRenderbuffers"));
-        RenderbufferStorage = reinterpret_cast<PFN_glRenderbufferStorage>(Load("glRenderbufferStorage"));
-        FramebufferRenderbuffer = reinterpret_cast<PFN_glFramebufferRenderbuffer>(Load("glFramebufferRenderbuffer"));
+        Load(CreateShader, "glCreateShader");
+        Load(ShaderSource, "glShaderSource");
+        Load(CompileShaderFn, "glCompileShader");
+        Load(GetShaderiv, "glGetShaderiv");
+        Load(GetShaderInfoLog, "glGetShaderInfoLog");
+        Load(DeleteShader, "glDeleteShader");
+        Load(CreateProgram, "glCreateProgram");
+        Load(AttachShader, "glAttachShader");
+        Load(BindAttribLocation, "glBindAttribLocation");
+        Load(LinkProgram, "glLinkProgram");
+        Load(GetProgramiv, "glGetProgramiv");
+        Load(GetProgramInfoLog, "glGetProgramInfoLog");
+        Load(DeleteProgram, "glDeleteProgram");
+        Load(UseProgram, "glUseProgram");
+        Load(GetUniformLocation, "glGetUniformLocation");
+        Load(UniformMatrix4fv, "glUniformMatrix4fv");
+        Load(Uniform3f, "glUniform3f");
+        Load(GenBuffers, "glGenBuffers");
+        Load(BindBuffer, "glBindBuffer");
+        Load(BufferData, "glBufferData");
+        Load(DeleteBuffers, "glDeleteBuffers");
+        Load(EnableVertexAttribArray, "glEnableVertexAttribArray");
+        Load(DisableVertexAttribArray, "glDisableVertexAttribArray");
+        Load(VertexAttribPointer, "glVertexAttribPointer");
+        Load(GenVertexArrays, "glGenVertexArrays");
+        Load(BindVertexArray, "glBindVertexArray");
+        Load(DeleteVertexArrays, "glDeleteVertexArrays");
+        Load(GenFramebuffers, "glGenFramebuffers");
+        Load(BindFramebuffer, "glBindFramebuffer");
+        Load(DeleteFramebuffers, "glDeleteFramebuffers");
+        Load(FramebufferTexture2D, "glFramebufferTexture2D");
+        Load(CheckFramebufferStatus, "glCheckFramebufferStatus");
+        Load(GenRenderbuffers, "glGenRenderbuffers");
+        Load(BindRenderbuffer, "glBindRenderbuffer");
+        Load(DeleteRenderbuffers, "glDeleteRenderbuffers");
+        Load(RenderbufferStorage, "glRenderbufferStorage");
+        Load(FramebufferRenderbuffer, "glFramebufferRenderbuffer");
 
-        if (!CreateShader || !CreateProgram || !GenBuffers || !GenFramebuffers || !GenVertexArrays)
-            throw std::runtime_error("Failed to load required OpenGL 3 entry points.");
         loaded = true;
     }
 
+}
+
+namespace {
+    enum : GLenum {
+        DrawFramebuffer = 0x8CA9, ReadFramebuffer = 0x8CA8,
+        DrawFramebufferBinding = 0x8CA6, ReadFramebufferBinding = 0x8CAA,
+        CurrentProgram = 0x8B8D, VertexArrayBinding = 0x85B5,
+        ArrayBufferBinding = 0x8894, RenderbufferBinding = 0x8CA7
+    };
+
+    struct ModelGLState
+    {
+        GLint drawFbo, readFbo, viewport[4], program, vao, buffer, texture, renderbuffer;
+        GLint depthFunc, cullMode, frontFace;
+        GLfloat clearColor[4];
+        GLdouble clearDepth;
+        GLboolean depth, cull, scissor, blend, depthMask, colorMask[4];
+        ModelGLState()
+        {
+            glGetIntegerv(DrawFramebufferBinding, &drawFbo);
+            glGetIntegerv(ReadFramebufferBinding, &readFbo);
+            glGetIntegerv(GL_VIEWPORT, viewport);
+            glGetIntegerv(CurrentProgram, &program);
+            glGetIntegerv(VertexArrayBinding, &vao);
+            glGetIntegerv(ArrayBufferBinding, &buffer);
+            glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
+            glGetIntegerv(RenderbufferBinding, &renderbuffer);
+            glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
+            glGetIntegerv(GL_CULL_FACE_MODE, &cullMode);
+            glGetIntegerv(GL_FRONT_FACE, &frontFace);
+            glGetFloatv(GL_COLOR_CLEAR_VALUE, clearColor);
+            glGetDoublev(GL_DEPTH_CLEAR_VALUE, &clearDepth);
+            depth = glIsEnabled(GL_DEPTH_TEST); cull = glIsEnabled(GL_CULL_FACE);
+            scissor = glIsEnabled(GL_SCISSOR_TEST); blend = glIsEnabled(GL_BLEND);
+            glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
+            glGetBooleanv(GL_COLOR_WRITEMASK, colorMask);
+        }
+        ~ModelGLState()
+        {
+            gl3::BindFramebuffer(DrawFramebuffer, drawFbo);
+            gl3::BindFramebuffer(ReadFramebuffer, readFbo);
+            glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+            gl3::UseProgram(program);
+            gl3::BindVertexArray(vao);
+            gl3::BindBuffer(GL_ARRAY_BUFFER, buffer);
+            glBindTexture(GL_TEXTURE_2D, texture);
+            gl3::BindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
+            glDepthFunc(depthFunc); glCullFace(cullMode); glFrontFace(frontFace);
+            glClearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3]);
+            glClearDepth(clearDepth);
+            glDepthMask(depthMask);
+            glColorMask(colorMask[0], colorMask[1], colorMask[2], colorMask[3]);
+            const auto restore = [](GLenum cap, GLboolean enabled) { if (enabled) glEnable(cap); else glDisable(cap); };
+            restore(GL_DEPTH_TEST, depth); restore(GL_CULL_FACE, cull);
+            restore(GL_SCISSOR_TEST, scissor); restore(GL_BLEND, blend);
+        }
+    };
 }
 
 #ifdef __APPLE__
@@ -314,7 +368,7 @@ namespace {
         gl3::GetShaderiv(s, GL_COMPILE_STATUS, &ok);
         if (!ok)
         {
-            char log[512];
+            char log[512]{};
             gl3::GetShaderInfoLog(s, sizeof(log), nullptr, log);
             gl3::DeleteShader(s);
             throw std::runtime_error(std::string("Shader compile: ") + log);
@@ -353,9 +407,9 @@ namespace {
         float ux = sy * fz - sz * fy;
         float uy = sz * fx - sx * fz;
         float uz = sx * fy - sy * fx;
-        m[0] = sx; m[4] = ux; m[8] = -fx; m[12] = 0;
-        m[1] = sy; m[5] = uy; m[9] = -fy; m[13] = 0;
-        m[2] = sz; m[6] = uz; m[10] = -fz; m[14] = 0;
+        m[0] = sx; m[4] = sy; m[8] = sz; m[12] = 0;
+        m[1] = ux; m[5] = uy; m[9] = uz; m[13] = 0;
+        m[2] = -fx; m[6] = -fy; m[10] = -fz; m[14] = 0;
         m[3] = 0;  m[7] = 0;  m[11] = 0;  m[15] = 1;
         m[12] = -(sx * eyeX + sy * eyeY + sz * eyeZ);
         m[13] = -(ux * eyeX + uy * eyeY + uz * eyeZ);
@@ -555,17 +609,16 @@ namespace {
         out.normals.clear();
         out.indices.clear();
 
-        uint32_t stride = d.stride;
-        const int derived = CalcStride(d.fmt);
-        if (derived >= 12 && static_cast<uint32_t>(derived) != stride)
-            stride = static_cast<uint32_t>(derived);
-        if (stride < 12 || d.nv < 3 || d.nidx < 3) return;
+        const uint32_t stride = d.stride;
+        if (stride < static_cast<uint32_t>(CalcStride(d.fmt)) || d.nv < 3 || d.nidx < 3) return;
+        if (d.nv > 1000000 || d.nidx > 6000000)
+            throw std::runtime_error("Mesh exceeds the preview limit (1M vertices / 6M indices).");
         if (d.vboff + static_cast<size_t>(d.nv) * stride > vbSize) return;
         if (static_cast<size_t>(d.idxoff) * 2 + static_cast<size_t>(d.nidx) * 2 > ibSize) return;
 
         const Offsets o = AttrOffsets(d.fmt);
-        out.positions.reserve(d.nv * 3);
-        out.normals.reserve(d.nv * 3);
+        out.positions.reserve(static_cast<size_t>(d.nv) * 3);
+        out.normals.reserve(static_cast<size_t>(d.nv) * 3);
 
         int bad = 0;
         for (uint32_t v = 0; v < d.nv; ++v)
@@ -593,7 +646,7 @@ namespace {
                 out.normals.push_back(0.f);
             }
         }
-        if (bad * 5 > static_cast<int>(d.nv))
+        if (bad != 0)
         {
             out.positions.clear();
             out.normals.clear();
@@ -629,11 +682,8 @@ namespace {
 
     std::string NameFromHeader(const CMChunk& chunk)
     {
-        if (chunk.GetMaskedID() != 0x138E || chunk.data.size() < 88)
-            return {};
-        char buf[65]{};
-        std::memcpy(buf, chunk.data.data() + 24, 64);
-        return buf;
+        if (chunk.GetMaskedID() != GenSub_ResourceHeader) return {};
+        return CMChunkResourceHeader(chunk).GetName();
     }
 
     const CMChunk* FindChildId(const CMChunk& parent, uint32_t id)
@@ -647,6 +697,7 @@ namespace {
     struct ModelAsset
     {
         std::string name;
+        const CMChunk* lod = nullptr;
         const uint8_t* vb = nullptr;
         size_t vbSize = 0;
         const uint8_t* ib = nullptr;
@@ -679,6 +730,7 @@ namespace {
                 {
                     ModelAsset a;
                     a.name = nm;
+                    a.lod = lod;
                     a.vb = vb->data.data();
                     a.vbSize = vb->data.size();
                     a.ib = ib->data.data();
@@ -694,6 +746,8 @@ namespace {
     void CollectLodBuffers(const CMChunk& chunk, std::vector<ModelAsset>& out, const std::string& nearbyName)
     {
         std::string nm = nearbyName;
+        if (const auto* header = chunk.FindChild(GenSub_ResourceHeader))
+            nm = NameFromHeader(*header);
         if (chunk.GetMaskedID() == 0x138E)
         {
             std::string h = NameFromHeader(chunk);
@@ -713,6 +767,7 @@ namespace {
             {
                 ModelAsset a;
                 a.name = nm;
+                a.lod = &chunk;
                 a.vb = vb->data.data();
                 a.vbSize = vb->data.size();
                 a.ib = ib->data.data();
@@ -731,12 +786,15 @@ namespace {
     struct DescGroup
     {
         std::string name;
+        const CMChunk* lod = nullptr;
         std::vector<Desc> descs;
     };
 
     void CollectDescriptors(const CMChunk& chunk, std::vector<DescGroup>& groups, const std::string& nearbyName)
     {
         std::string nm = nearbyName;
+        if (const auto* header = chunk.FindChild(GenSub_ResourceHeader))
+            nm = NameFromHeader(*header);
         if (chunk.GetMaskedID() == 0x138E)
         {
             std::string h = NameFromHeader(chunk);
@@ -759,9 +817,11 @@ namespace {
             {
                 DescGroup g;
                 g.name = nm;
+                g.lod = &chunk;
                 g.descs = std::move(local);
                 groups.push_back(std::move(g));
             }
+            return;
         }
 
         if (chunk.GetMaskedID() == 0x0327)
@@ -786,10 +846,9 @@ namespace {
         int ok = 0;
         for (const Desc& d : descs)
         {
-            uint32_t stride = d.stride;
-            const int derived = CalcStride(d.fmt);
-            if (derived >= 12) stride = static_cast<uint32_t>(derived);
-            if (stride < 12 || d.nv < 3 || d.nidx < 3) continue;
+            const uint32_t stride = d.stride;
+            if (stride < static_cast<uint32_t>(CalcStride(d.fmt)) || d.nv < 3 || d.nidx < 3) continue;
+            if (d.nv > 1000000 || d.nidx > 6000000) continue;
             if (d.vboff + static_cast<size_t>(d.nv) * stride > asset.vbSize) continue;
             if (static_cast<size_t>(d.idxoff) * 2 + static_cast<size_t>(d.nidx) * 2 > asset.ibSize) continue;
             int sampleBad = 0;
@@ -817,6 +876,11 @@ namespace {
             DecodeMesh(asset.vb, asset.vbSize, asset.ib, asset.ibSize, d, m);
             if (!m.indices.empty() && !m.positions.empty())
             {
+                size_t bytes = (m.positions.size() + m.normals.size()) * sizeof(float) + m.indices.size() * sizeof(uint32_t);
+                for (const auto& mesh : meshes)
+                    bytes += (mesh.positions.size() + mesh.normals.size()) * sizeof(float) + mesh.indices.size() * sizeof(uint32_t);
+                if (bytes > 128 * 1024 * 1024)
+                    throw std::runtime_error("Model exceeds the 128 MiB preview budget.");
                 meshes.push_back(std::move(m));
                 any = true;
             }
@@ -879,7 +943,7 @@ namespace {
             for (const auto& g : groups)
             {
                 const std::string gKey = Lower(g.name);
-                if (!assetKey.empty() && !gKey.empty() && assetKey != gKey)
+                if (g.lod != asset.lod && (assetKey.empty() || assetKey != gKey))
                     continue;
                 if (!want.empty())
                 {
@@ -891,19 +955,6 @@ namespace {
                 {
                     bestScore = s;
                     best = &g;
-                }
-            }
-
-            if (!best)
-            {
-                for (const auto& g : groups)
-                {
-                    const int s = ScoreDescGroup(asset, g.descs);
-                    if (s > bestScore)
-                    {
-                        bestScore = s;
-                        best = &g;
-                    }
                 }
             }
 
@@ -921,6 +972,7 @@ namespace {
                     return true;
         }
 
+        if (!want.empty()) return false;
         for (const auto& a : assets)
             if (!a.name.empty() && tryAsset(a))
                 return true;
@@ -934,7 +986,7 @@ namespace {
 }
 
 
-ModelPreview::~ModelPreview() { Clear(); DestroyGL(); }
+ModelPreview::~ModelPreview() { Clear(); }
 
 void ModelPreview::DestroyGL()
 {
@@ -943,6 +995,12 @@ void ModelPreview::DestroyGL()
         fboW = fboH = 0;
         return;
     }
+    for (const auto& mesh : gpuMeshes) {
+        gl3::DeleteVertexArrays(1, &mesh.vao);
+        const unsigned int buffers[] = {mesh.positions, mesh.normals, mesh.indices};
+        gl3::DeleteBuffers(3, buffers);
+    }
+    gpuMeshes.clear();
     if (colorTex) glDeleteTextures(1, &colorTex);
     if (depthRbo) gl3::DeleteRenderbuffers(1, &depthRbo);
     if (fbo) gl3::DeleteFramebuffers(1, &fbo);
@@ -953,6 +1011,8 @@ void ModelPreview::DestroyGL()
 
 void ModelPreview::Clear()
 {
+    DestroyGL();
+    renderDirty = true;
     meshes.clear();
     active = false;
     name.clear();
@@ -968,7 +1028,9 @@ void ModelPreview::EnsureProgram()
     if (program) return;
     gl3::EnsureLoaded();
     unsigned int vs = CompileShader(GL_VERTEX_SHADER, kVertexShader);
-    unsigned int fs = CompileShader(GL_FRAGMENT_SHADER, kFragmentShader);
+    unsigned int fs = 0;
+    try { fs = CompileShader(GL_FRAGMENT_SHADER, kFragmentShader); }
+    catch (...) { gl3::DeleteShader(vs); throw; }
     program = gl3::CreateProgram();
     gl3::AttachShader(program, vs);
     gl3::AttachShader(program, fs);
@@ -981,7 +1043,7 @@ void ModelPreview::EnsureProgram()
     gl3::GetProgramiv(program, GL_LINK_STATUS, &ok);
     if (!ok)
     {
-        char log[512];
+        char log[512]{};
         gl3::GetProgramInfoLog(program, sizeof(log), nullptr, log);
         gl3::DeleteProgram(program);
         program = 0;
@@ -1107,10 +1169,16 @@ void ModelPreview::Update(const PackageSession& session)
     selected = session.selected;
     package = session.package.get();
     revision = session.revision;
-    if (!package) return;
-    if (!session.selected && !session.package) return;
+    if (!package || !selected) return;
     try
     {
+        const auto resource = SelectedResource(*package, selected);
+        if (!resource || resource->GetResourceType() != kCMResourceType_Geometry) return;
+        active = true;
+        name = resource->GetName();
+        if (name.empty()) throw std::runtime_error("Geometry resource has no name; cannot match its buffers.");
+        if (package->isLittleEndian)
+            throw std::runtime_error("Model preview currently supports big-endian geometry only.");
         if (DecodeGeometry(session))
             active = true;
     }
@@ -1121,16 +1189,57 @@ void ModelPreview::Update(const PackageSession& session)
     }
 }
 
+void ModelPreview::UploadMeshes()
+{
+    gpuMeshes.reserve(meshes.size());
+    for (const auto& mesh : meshes)
+    {
+        gpuMeshes.emplace_back();
+        auto& gpu = gpuMeshes.back();
+        gl3::GenVertexArrays(1, &gpu.vao);
+        gl3::BindVertexArray(gpu.vao);
+        gl3::GenBuffers(1, &gpu.positions);
+        gl3::GenBuffers(1, &gpu.normals);
+        gl3::GenBuffers(1, &gpu.indices);
+
+        gl3::BindBuffer(GL_ARRAY_BUFFER, gpu.positions);
+        gl3::BufferData(GL_ARRAY_BUFFER,
+            static_cast<GLsizeiptr>(mesh.positions.size() * sizeof(float)),
+            mesh.positions.data(), GL_STATIC_DRAW);
+        gl3::EnableVertexAttribArray(0);
+        gl3::VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+
+        gl3::BindBuffer(GL_ARRAY_BUFFER, gpu.normals);
+        gl3::BufferData(GL_ARRAY_BUFFER,
+            static_cast<GLsizeiptr>(mesh.normals.size() * sizeof(float)),
+            mesh.normals.data(), GL_STATIC_DRAW);
+        gl3::EnableVertexAttribArray(1);
+        gl3::VertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+
+        gl3::BindBuffer(GL_ELEMENT_ARRAY_BUFFER, gpu.indices);
+        gl3::BufferData(GL_ELEMENT_ARRAY_BUFFER,
+            static_cast<GLsizeiptr>(mesh.indices.size() * sizeof(uint32_t)),
+            mesh.indices.data(), GL_STATIC_DRAW);
+
+    }
+}
+
 void ModelPreview::RenderScene(int w, int h)
 {
+    gl3::EnsureLoaded();
+    const ModelGLState savedState;
     EnsureProgram();
     EnsureFBO(w, h);
+    if (gpuMeshes.empty()) UploadMeshes();
 
-    GLint prevFbo = 0;
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
     gl3::BindFramebuffer(GL_FRAMEBUFFER, fbo);
     glViewport(0, 0, w, h);
     glClearColor(0.18f, 0.19f, 0.22f, 1.f);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_BLEND);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_TRUE);
+    glClearDepth(1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
@@ -1172,45 +1281,10 @@ void ModelPreview::RenderScene(int w, int h)
         const float* col = kColors[mi % 6];
         gl3::Uniform3f(locColor, col[0], col[1], col[2]);
 
-        unsigned int vao = 0, vbo = 0, nbo = 0, ebo = 0;
-        gl3::GenVertexArrays(1, &vao);
-        gl3::BindVertexArray(vao);
-        gl3::GenBuffers(1, &vbo);
-        gl3::GenBuffers(1, &nbo);
-        gl3::GenBuffers(1, &ebo);
-
-        gl3::BindBuffer(GL_ARRAY_BUFFER, vbo);
-        gl3::BufferData(GL_ARRAY_BUFFER,
-            static_cast<GLsizeiptr>(mesh.positions.size() * sizeof(float)),
-            mesh.positions.data(), GL_STATIC_DRAW);
-        gl3::EnableVertexAttribArray(0);
-        gl3::VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
-
-        gl3::BindBuffer(GL_ARRAY_BUFFER, nbo);
-        gl3::BufferData(GL_ARRAY_BUFFER,
-            static_cast<GLsizeiptr>(mesh.normals.size() * sizeof(float)),
-            mesh.normals.data(), GL_STATIC_DRAW);
-        gl3::EnableVertexAttribArray(1);
-        gl3::VertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
-
-        gl3::BindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-        gl3::BufferData(GL_ELEMENT_ARRAY_BUFFER,
-            static_cast<GLsizeiptr>(mesh.indices.size() * sizeof(uint32_t)),
-            mesh.indices.data(), GL_STATIC_DRAW);
-
+        gl3::BindVertexArray(gpuMeshes[mi].vao);
         glDrawElements(GL_TRIANGLES, static_cast<int>(mesh.indices.size()), GL_UNSIGNED_INT, nullptr);
-
-        gl3::BindVertexArray(0);
-        gl3::DeleteVertexArrays(1, &vao);
-        gl3::DeleteBuffers(1, &vbo);
-        gl3::DeleteBuffers(1, &nbo);
-        gl3::DeleteBuffers(1, &ebo);
     }
 
-    gl3::UseProgram(0);
-    gl3::BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
 }
 
 void ModelPreview::Draw()
@@ -1228,14 +1302,18 @@ void ModelPreview::Draw()
     const ImVec2 available = ImGui::GetContentRegionAvail();
     if (available.x < 32 || available.y < 32) return;
 
-    const int rw = static_cast<int>(available.x);
-    const int rh = static_cast<int>(available.y);
+    const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
+    const float pixelW = available.x * scale.x, pixelH = available.y * scale.y;
+    const float fit = std::min({1.0f, 1920.f / pixelW, 1080.f / pixelH});
+    const int rw = std::max(1, static_cast<int>(pixelW * fit));
+    const int rh = std::max(1, static_cast<int>(pixelH * fit));
 
     ImGui::InvisibleButton("##modelview", available);
     const bool hovered = ImGui::IsItemHovered();
-    if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
     {
         const ImVec2 delta = ImGui::GetIO().MouseDelta;
+        renderDirty = renderDirty || delta.x != 0 || delta.y != 0;
         yaw += delta.x * 0.01f;
         pitch += delta.y * 0.01f;
         pitch = std::clamp(pitch, -1.4f, 1.4f);
@@ -1243,13 +1321,18 @@ void ModelPreview::Draw()
     if (hovered)
     {
         const float wheel = ImGui::GetIO().MouseWheel;
-        if (wheel != 0.f)
-            distance = std::max(0.2f, distance * (wheel > 0 ? 0.9f : 1.11f));
+        if (wheel != 0.f) {
+            distance = std::clamp(distance * (wheel > 0 ? 0.9f : 1.11f), 0.2f, 1000000.f);
+            renderDirty = true;
+        }
     }
 
     try
     {
-        RenderScene(rw, rh);
+        if (renderDirty || fboW != rw || fboH != rh) {
+            RenderScene(rw, rh);
+            renderDirty = false;
+        }
     }
     catch (const std::exception& ex)
     {

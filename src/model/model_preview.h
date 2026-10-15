@@ -33,6 +33,9 @@ private:
     uint64_t revision = 0;
 
     std::vector<ModelMesh> meshes;
+    struct GPUMesh { unsigned int vao = 0, positions = 0, normals = 0, indices = 0; };
+    std::vector<GPUMesh> gpuMeshes;
+    bool renderDirty = true;
     unsigned int program = 0;
     unsigned int fbo = 0, colorTex = 0, depthRbo = 0;
     int fboW = 0, fboH = 0;
@@ -48,5 +51,6 @@ private:
     void DestroyGL();
     bool DecodeGeometry(const PackageSession& session);
     void ComputeBounds();
+    void UploadMeshes();
     void RenderScene(int w, int h);
 };

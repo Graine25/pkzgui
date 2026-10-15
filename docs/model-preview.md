@@ -14,7 +14,7 @@ Use the overlay's arrow to condense it to an expand arrow and **Textures** check
 
 **Cutout alpha** is optional per material. Diffuse alpha can encode other information: applying an alpha test indiscriminately removes the casual character's face. Exact game alpha state is not inferred here. **Two-sided** and **Frame model** help inspect the geometry.
 
-This is a static geometry and base-color preview. It does not run the game's material shaders, compose scene hierarchies, animate bones/morphs, or reproduce its lighting, normal/specular maps, decals, animated UVs and effects. Unsupported layouts produce an error instead of substituting unrelated geometry.
+The default renderer is a static geometry and base-color preview. Optional [GSX shader previews](shader-previews.md) execute converted static material passes and their package textures. Scene hierarchies, animation and exact game lighting still require runtime data. Unsupported layouts produce an error instead of substituting unrelated geometry.
 
 ## Asset loading
 
@@ -54,12 +54,9 @@ The fork's directory-input mode builds a compiled cache. Put the exported `.bin`
 
 The cache contains proprietary game shader data and is a local artifact, not a source dependency to commit or bundle.
 
-The HLSL/compiled cache is not connected to the current OpenGL renderer. Adding an import button alone cannot provide the game's shading. The next implementation should:
+[GSX shader previews](shader-previews.md) now connect embedded static passes to the OpenGL viewer through reeot-XenosRecomp → HLSL → DXC/SPIR-V → SPIRV-Cross/GLSL. The adapter replaces bindless/raw-buffer bindings with bounded texture slots and uniform buffers while preserving reflected register locations. It supports preview-only HLSL replacements and captured constant snapshots. The separate reeot compressed cache format is not imported.
 
-1. Keep geometry/material parsing independent of the renderer. Add a guest-shader backend that consumes reeot's output; keep the current base-color renderer as a fallback while that backend matures.
-2. Reuse the fork's compiled SPIR-V and its vertex-fetch/interpolant metadata, or compile its HLSL using the matching `REEOT_RECOMP` contract. Preserve pass variants and select compatible VS/PS interpolants. Match the fork's exact cache revision: its SPIR-V payloads are compressed with smol-v and the outer cache uses zstd.
-3. Reproduce the binding contract from `src/gpu/shaders/guest_shaders.*`, `shader_cache.h`, `vertex_layout.cpp`, `format.cpp` and XenosRecomp's `shader_common.h`: vertex/pixel float-register files, shared constants, descriptor indices, booleans, specialization masks and the packed-normal/signed-UV corrections. Raw buffers and bindless descriptor access prevent directly dropping these shaders into the present OpenGL 3.x programs.
-4. Start with one captured OfficeSuit draw, its camera/world constants and its actual material pass. Render it offscreen, compare against reeot, then add normal/specular textures, lighting and skin/morph variants. Cache by container hash and specialization state; perform conversion outside the frame loop.
+Further work should compare a known captured OfficeSuit draw against reeot, then extend runtime resource/state bindings and skin/morph inputs. Exact scene rendering still needs the runtime camera/world constants, lighting, render targets and pass state.
 
 The export sidecar describes package bindings; it is not a complete runtime draw capture. Shader containers do not contain live camera/bone matrices, scene lighting, render targets, all dynamically selected states, or runtime resource pointers.
 

@@ -391,9 +391,10 @@ void main() {
     Check(rejected,"Invalid replacement shader was accepted"); draw();
     Check(colorCount(false)>100,"A failed replacement discarded the last valid shader");
     if (ShaderCompilerAvailable()) {
-        guest.vertexHLSL=R"(float4 shaderMain(float3 p : POSITION0) : SV_Position {
+        guest.vertexHLSL=R"(#define constantRow(INDEX) select((INDEX)<256, vk::RawBufferLoad<float4>(g_PushConstants.VertexShaderConstants + ((INDEX)*16), 0x10), float4(0,0,0,0))
+        float4 shaderMain(float3 p : POSITION0) : SV_Position {
             float4 v=float4(p,1);
-            return float4(dot(v,gsxVS[0]),dot(v,gsxVS[1]),dot(v,gsxVS[2]),dot(v,gsxVS[3])); })";
+            return float4(dot(v,constantRow(0)),dot(v,constantRow(1)),dot(v,constantRow(2)),dot(v,constantRow(3))); })";
         guest.pixelHLSL="float4 shaderMain() : SV_Target0 {return float4(0,1,0,1);}";
         WriteShaderAsset(guest,shaderPath);
         const auto edited=CompileShaderEdits(guest,shaderPath+".vert.hlsl",shaderPath+".frag.hlsl");

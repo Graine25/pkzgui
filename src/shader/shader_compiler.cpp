@@ -19,7 +19,7 @@ cbuffer GsxSharedBlock : register(b2, space7) { uint4 gsxShared[64]; };
 uint gsxSharedU(uint offset) { return gsxShared[offset / 16][(offset / 4) % 4]; }
 uint4 gsxSharedU4(uint offset) { return gsxShared[offset / 16]; }
 )";
-    static const std::regex load(R"((\s*#define .*?)vk::RawBufferLoad<(\w+)>\(g_PushConstants\.(\w+) \+ (.*)\)\s*)");
+    static const std::regex load(R"((\s*#define .*?)vk::RawBufferLoad<(\w+)>\(g_PushConstants\.(\w+) \+ )");
     static const std::regex alignment(R"(,\s*0x10$)");
     static const std::regex heap(R"(DescriptorHeap\[\])");
     static const std::regex sampler(R"(g_SamplerDescriptorHeap\[[^\]]+\])");
@@ -27,9 +27,17 @@ uint4 gsxSharedU4(uint offset) { return gsxShared[offset / 16]; }
     std::istringstream lines(source);std::string line;
     while(std::getline(lines,line)){
         std::smatch match;
-        if(std::regex_match(line,match,load)){
+        if(std::regex_search(line,match,load)){
             const std::string prefix=match[1],type=match[2],buffer=match[3];
-            const std::string offset=std::regex_replace(match[4].str(),alignment,"");
+            const size_t start=match.position()+match.length();
+            size_t end=start;
+            int depth=1;
+            for(;end<line.size();++end){
+                if(line[end]=='(')++depth;
+                else if(line[end]==')' && --depth==0)break;
+            }
+            if(depth)throw std::runtime_error("Unbalanced shader constant load.");
+            const std::string offset=std::regex_replace(line.substr(start,end-start),alignment,"");
             std::string value;
             if(prefix.find("DescriptorIndex")!=std::string::npos){
                 size_t used=0;const auto n=std::stoul(offset,&used);if(used!=offset.size())throw std::runtime_error("Dynamic texture descriptor is unsupported.");value=std::to_string((n%64)/4);
@@ -41,7 +49,7 @@ uint4 gsxSharedU4(uint offset) { return gsxShared[offset / 16]; }
             else if(type=="float4")value="asfloat(gsxSharedU4("+offset+"))";
             else if(type=="float2")value="asfloat(uint2(gsxSharedU("+offset+"), gsxSharedU(("+offset+")+4)))";
             else throw std::runtime_error("Unsupported shared-constant type: "+type);
-            line=prefix+value;
+            line=prefix+value+line.substr(end+1);
         }
         line=std::regex_replace(line,heap,"DescriptorHeap[16]");
         line=std::regex_replace(line,sampler,"gsxSampler");
@@ -89,6 +97,7 @@ std::string GLSL(const std::string& hlsl,bool pixel)
         }
     }
     if(!pixel)for(const auto& r:resources.stage_outputs)c.set_name(r.id,"gsxVarying"+std::to_string(c.get_decoration(r.id,spv::DecorationLocation)));
+    c.build_dummy_sampler_for_combined_images();
     c.build_combined_image_samplers();
     for(const auto& sampler:c.get_combined_image_samplers()){
         const auto& type=c.get_type(c.get_type_from_variable(sampler.image_id).self);

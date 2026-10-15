@@ -786,6 +786,12 @@ void ModelPreview::Draw(PackageSession* session)
         else if (mat.textureCRC) ImGui::TextWrapped("Texture CRC 0x%08X is in another package. A PNG can be previewed here.", mat.textureCRC);
         else ImGui::TextWrapped("This material has no base-color texture.");
         if (ImGui::Checkbox("Cutout alpha", &mat.alphaCutout)) renderDirty = true;
+        if (!mat.passes.empty() && ImGui::Button("Export material shaders...")) {
+            try {
+                const auto path = PickFile(glfwGetCurrentContext(), "Shader containers", "bin", true, SanitizeFileName(mat.name) + ".bin");
+                if (!path.empty()) { ExportModelShaders(mat, path); textureStatus = "Shader containers and binding metadata exported for XenosRecomp."; }
+            } catch (const std::exception& ex) { textureStatus = ex.what(); }
+        }
         if (!texture.png.empty()) ImGui::TextWrapped("Preview: %s", texture.png.c_str());
         try {
             if (session && mat.texture && ImGui::Button("Extract package PNG...")) {

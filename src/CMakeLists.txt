@@ -39,6 +39,7 @@ add_executable(pkzgui
     model/model_preview.cpp
     model/model_material.cpp
     model/model_geometry.cpp
+    model/model_shader_export.cpp
     ui/app_menu.cpp
     ui/workspace.cpp
     ui/workspace_actions.cpp
@@ -91,6 +92,7 @@ if(PKZGUI_BUILD_TESTS)
         model/model_preview.cpp
         model/model_material.cpp
         model/model_geometry.cpp
+        model/model_shader_export.cpp
         package/resource_selection.cpp
         texture/texture_actions.cpp
         platform/file_io.cpp

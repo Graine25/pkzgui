@@ -126,6 +126,12 @@ void MaterialTests()
     exported.passes.push_back({0,0,1,record,{}});
     const auto container = ModelShaderContainer(exported,record);
     Check(container.size() == 40 && container[0] == 0x10 && container[36] == 0x12, "Shader export did not concatenate the virtual and physical container");
+    const auto exportPath = (std::filesystem::temp_directory_path()/"pkzgui-model-shader-test.bin").u8string();
+    ExportModelShaders(exported,exportPath);
+    Check(ReadFile(exportPath) == container, "Exported shader bytes differ");
+    const auto json = ReadFile(exportPath+".json");
+    Check(std::string(json.begin(),json.end()).find("\\u000a") != std::string::npos, "Shader binding manifest contains an unescaped control character");
+    std::filesystem::remove(exportPath); std::filesystem::remove(exportPath+".json");
     image.data.pop_back(); bool rejected = false;
     try { ModelShaderContainer(exported,record); } catch (const std::exception&) { rejected = true; }
     Check(rejected, "Truncated shader physical data was exported");

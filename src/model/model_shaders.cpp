@@ -8,11 +8,17 @@
 #include <algorithm>
 #include <chrono>
 #include <stdexcept>
+#include <regex>
 
 void ModelPreview::InstallShader(size_t index,const ShaderAsset& asset)
 {
     if(index>=materials.size())throw std::runtime_error("Select a material first.");
-    if(materials[index].uvSet!=0)throw std::runtime_error("Game shader preview currently supports base UV set 0.");
+    for(unsigned uv=0;uv<4;++uv){
+        const auto name=uv?"gsxUV"+std::to_string(uv):std::string("gsxUV");
+        if(!std::regex_search(asset.vertexGLSL,std::regex("\\bin\\s+\\w+\\s+"+name+"\\b")))continue;
+        for(const auto& mesh:meshes)if(mesh.material==index && !mesh.hasShaderUV[uv])
+            throw std::runtime_error("Mesh declaration has no TEXCOORD"+std::to_string(uv)+" stream required by this shader.");
+    }
     for(const auto& mesh:meshes)if(mesh.material==index && !mesh.shaderVertexError.empty())throw std::runtime_error(mesh.shaderVertexError);
     materialShaders[index]->Load(asset);
     textured=true;renderDirty=true;

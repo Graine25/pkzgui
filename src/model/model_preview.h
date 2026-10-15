@@ -77,7 +77,7 @@ private:
     void Log(const std::string& message);
     unsigned int MaterialTextureID(size_t index);
     unsigned int UploadTexture(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height);
-    struct GPUMesh { unsigned int vao = 0, positions = 0, normals = 0, indices = 0, texcoords = 0, tangents = 0, colors = 0; };
+    struct GPUMesh { unsigned int vao = 0, positions = 0, normals = 0, indices = 0, texcoords = 0, tangents = 0, colors = 0; unsigned int shaderUV[4]{}; };
     std::vector<GPUMesh> gpuMeshes;
     bool renderDirty = true;
     unsigned int program = 0;

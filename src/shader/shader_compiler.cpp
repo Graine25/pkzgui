@@ -91,7 +91,7 @@ std::string GLSL(const std::string& hlsl,bool pixel)
         else {
             const auto name=r.name;
             const char* target=nullptr;
-            for(const auto& pair:std::vector<std::pair<std::string,const char*>>{{"POSITION0","gsxPosition"},{"NORMAL0","gsxNormal"},{"TANGENT0","gsxTangent"},{"COLOR0","gsxColor"},{"TEXCOORD0","gsxUV"}})
+            for(const auto& pair:std::vector<std::pair<std::string,const char*>>{{"POSITION0","gsxPosition"},{"NORMAL0","gsxNormal"},{"TANGENT0","gsxTangent"},{"COLOR0","gsxColor"},{"TEXCOORD0","gsxUV"},{"TEXCOORD1","gsxUV1"},{"TEXCOORD2","gsxUV2"},{"TEXCOORD3","gsxUV3"}})
                 if(name.size()>=pair.first.size()&&name.compare(name.size()-pair.first.size(),pair.first.size(),pair.first)==0)target=pair.second;
             if(!target)throw std::runtime_error("Static shader preview does not support vertex input "+name);
             c.set_name(r.id,target);

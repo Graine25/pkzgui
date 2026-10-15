@@ -146,6 +146,8 @@ void MaterialTests()
     Check(mesh.positions[0] == -1.f && mesh.positions[1] == 0.f && mesh.positions[3] == 1.f, "Declaration position offset was ignored");
     Check(mesh.hasUV && mesh.texcoords[2] == 1024.f && mesh.texcoords[5] == 1024.f, "UV set 1 or integer short2 was decoded incorrectly");
     Check(mesh.normals[2] > 0.99f, "Packed normal was decoded incorrectly");
+    Check(mesh.hasShaderUV[1] && !mesh.hasShaderUV[0] && mesh.shaderUV[1][2]==1024.f,
+        "Guest UV1 was lost or substituted for UV0");
     auto& material = session.package->rootChunks[0].children.back().children[0];
     material.data.pop_back(); ++session.revision; preview.Update(session);
     Check(preview.error.find("Truncated") != std::string::npos, "Truncated shader record was accepted");
@@ -297,7 +299,7 @@ int GLTests()
         if (isBuffer(i)) buffers.insert(i);
         if (isFbo(i) && i != fbo[0] && i != fbo[1]) modelFbo = i;
     }
-    Check(buffers.size() == 6 && modelFbo != 0, "Mesh buffers were not retained");
+    Check(buffers.size() == 10 && modelFbo != 0, "Mesh buffers were not retained");
     bindFbo(0x8CA8, modelFbo);
     std::array<unsigned char, 256 * 256 * 4> image{};
     glReadPixels(0, 0, 256, 256, GL_RGBA, GL_UNSIGNED_BYTE, image.data());
@@ -433,6 +435,17 @@ void main() {
         const auto edited=CompileShaderEdits(guest,shaderPath+".vert.hlsl",shaderPath+".frag.hlsl");
         WriteShaderAsset(edited,shaderPath); preview.LoadShaderPreview(0,shaderPath); draw();
         Check(colorCount(true)>100,"HLSL edits did not reach the guest preview");
+        guest.vertexHLSL=R"(struct Output {float4 position : SV_Position;float2 uv : TEXCOORD0;};
+Output shaderMain(float3 p : POSITION0,float2 uv : TEXCOORD1) {
+    Output result;float4 v=float4(p,1);
+    result.position=float4(dot(v,gsxVS[0]),dot(v,gsxVS[1]),dot(v,gsxVS[2]),dot(v,gsxVS[3]));
+    result.uv=uv/1024.0;return result;
+})";
+        guest.pixelHLSL="float4 shaderMain(float2 uv : TEXCOORD0) : SV_Target0 {return uv.x>0.25?float4(0,1,0,1):float4(1,0,1,1);}";
+        WriteShaderAsset(guest,shaderPath);
+        const auto secondary=CompileShaderEdits(guest,shaderPath+".vert.hlsl",shaderPath+".frag.hlsl");
+        WriteShaderAsset(secondary,shaderPath);preview.LoadShaderPreview(0,shaderPath);draw();
+        Check(colorCount(true)>100 && colorCount(false)>100,"Converted TEXCOORD1 shader did not receive the separate UV1 buffer");
         guest.pixelHLSL=R"(Texture2D<float4> g_Texture2DDescriptorHeap[] : register(t0,space0);
 TextureCube<float4> g_TextureCubeDescriptorHeap[] : register(t0,space2);
 SamplerState g_SamplerDescriptorHeap[] : register(s0,space3);

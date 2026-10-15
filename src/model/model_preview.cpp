@@ -409,6 +409,7 @@ void ModelPreview::DestroyGL()
         gl3::DeleteVertexArrays(1, &mesh.vao);
         const unsigned int buffers[] = {mesh.positions, mesh.normals, mesh.indices, mesh.texcoords, mesh.tangents, mesh.colors};
         gl3::DeleteBuffers(6, buffers);
+        gl3::DeleteBuffers(4, mesh.shaderUV);
     }
     gpuMeshes.clear();
     for (const auto& textures : shaderTextures) for (const auto& texture : textures) if (texture.texture) glDeleteTextures(1, &texture.texture);
@@ -658,6 +659,12 @@ void ModelPreview::UploadMeshes()
             gl3::GenBuffers(1,buffers[i]); gl3::BindBuffer(GL_ARRAY_BUFFER,*buffers[i]);
             gl3::BufferData(GL_ARRAY_BUFFER,static_cast<GLsizeiptr>(extra[i]->size()*sizeof(float)),extra[i]->data(),GL_STATIC_DRAW);
             gl3::EnableVertexAttribArray(3+i);gl3::VertexAttribPointer(3+i,4,GL_FLOAT,GL_FALSE,0,nullptr);
+        }
+        gl3::GenBuffers(4,gpu.shaderUV);
+        for(unsigned i=0;i<4;++i){
+            gl3::BindBuffer(GL_ARRAY_BUFFER,gpu.shaderUV[i]);
+            gl3::BufferData(GL_ARRAY_BUFFER,mesh.shaderUV[i].size()*sizeof(float),mesh.shaderUV[i].data(),GL_STATIC_DRAW);
+            gl3::EnableVertexAttribArray(5+i);gl3::VertexAttribPointer(5+i,2,GL_FLOAT,GL_FALSE,0,nullptr);
         }
         gl3::BindBuffer(GL_ELEMENT_ARRAY_BUFFER, gpu.indices);
         gl3::BufferData(GL_ELEMENT_ARRAY_BUFFER,

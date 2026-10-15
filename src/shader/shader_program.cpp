@@ -88,8 +88,8 @@ void ShaderProgram::Load(const ShaderAsset& source)
     auto& g=GL();const auto vs=Compile(0x8B31,source.vertexGLSL);unsigned ps=0,next=0;
     try{
         ps=Compile(0x8B30,source.pixelGLSL);next=g.glCreateProgram();g.glAttachShader(next,vs);g.glAttachShader(next,ps);
-        const char* names[]={"gsxPosition","gsxNormal","gsxUV","gsxTangent","gsxColor"};
-        for(unsigned i=0;i<5;++i)g.glBindAttribLocation(next,i,names[i]);
+        const char* names[]={"gsxPosition","gsxNormal","gsxBaseUV","gsxTangent","gsxColor","gsxUV","gsxUV1","gsxUV2","gsxUV3"};
+        for(unsigned i=0;i<9;++i)g.glBindAttribLocation(next,i,names[i]);
         g.glLinkProgram(next);int success=0;g.glGetProgramiv(next,0x8B82,&success);
         if(!success){char message[8192]{};g.glGetProgramInfoLog(next,sizeof(message),nullptr,message);throw std::runtime_error(std::string("Shader stages do not link: ")+message);}
     }catch(...){if(next)g.glDeleteProgram(next);if(ps)g.glDeleteShader(ps);g.glDeleteShader(vs);throw;}

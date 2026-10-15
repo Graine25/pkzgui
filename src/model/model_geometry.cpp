@@ -26,6 +26,24 @@ namespace {
         return f;
     }
 
+    std::array<float,2> DecodeUV(const uint8_t* uv,uint32_t uvType)
+    {
+        float u=0,t=0;
+        if ((uvType & 63) == 25) {
+            const bool signedValue = (uvType & 0x100) != 0;
+            u = signedValue ? float(static_cast<int16_t>(ReadBE16(uv))) : float(ReadBE16(uv));
+            t = signedValue ? float(static_cast<int16_t>(ReadBE16(uv+2))) : float(ReadBE16(uv+2));
+            if (!(uvType & 0x200)) {
+                const float divisor = signedValue ? 32767.f : 65535.f;
+                u = std::max(-1.f, u / divisor); t = std::max(-1.f, t / divisor);
+            }
+        } else if ((uvType & 63) == 37) {
+            u = ReadBEf32(uv); t = ReadBEf32(uv + 4);
+        } else throw std::runtime_error("Unsupported UV vertex format.");
+        if (!std::isfinite(u) || !std::isfinite(t)) throw std::runtime_error("Non-finite model UV.");
+        return {u,t};
+    }
+
     int s11(int v) { return v > 1023 ? v - 2048 : v; }
     int s10(int v) { return v > 511 ? v - 1024 : v; }
 
@@ -130,12 +148,14 @@ namespace {
         int positionOffset = 0, tangentOffset = -1, colorOffset = -1;
         uint32_t tangentType = 0, colorType = 0;
         uint32_t normalType = 16, uvType = 25 | 0x300;
+        std::array<int,4> uvOffsets{{o.uv,-1,-1,-1}};
+        std::array<uint32_t,4> uvTypes{{uvType,uvType,uvType,uvType}};
         const ModelMaterial* material = d.mat < materials.size() ? &materials[d.mat] : nullptr;
         if (material) {
             const auto* decl = ModelVertexDeclaration(*material, d.fmt);
             if (!decl) throw std::runtime_error("No matching vertex declaration for " + material->name);
             bool position = false;
-            o.nrm = o.uv = -1;
+            o.nrm = o.uv = -1;uvOffsets.fill(-1);
             for (const auto& a : decl->attributes) {
                 if (a.stream != 0) continue;
                 const uint32_t type = a.type & 63;
@@ -148,12 +168,14 @@ namespace {
                 if (a.usage == 6 && a.index == 0) { tangentOffset = a.offset; tangentType = a.type; }
                 if (a.usage == 10 && a.index == 0) { colorOffset = a.offset; colorType = a.type; }
                 if (a.usage == 3 && a.index == 0) { o.nrm = a.offset; normalType = a.type; }
+                if(a.usage==5 && a.index<uvOffsets.size()){uvOffsets[a.index]=a.offset;uvTypes[a.index]=a.type;}
                 if (a.usage == 5 && a.index == material->uvSet) { o.uv = a.offset; uvType = a.type; }
             }
             if (!position) throw std::runtime_error("Vertex declaration has no base position stream.");
         }
         out.hasUV = o.uv >= 0;
         out.integerUV = (uvType & 63) == 25 && (uvType & 0x200);
+        for(size_t i=0;i<uvOffsets.size();++i){out.hasShaderUV[i]=uvOffsets[i]>=0;out.shaderUV[i].reserve(size_t(d.nv)*2);}
         out.texcoords.reserve(size_t(d.nv) * 2);
         out.tangents.reserve(size_t(d.nv) * 4);
         out.colors.reserve(size_t(d.nv) * 4);
@@ -193,23 +215,12 @@ namespace {
             for(float value:color)if(!std::isfinite(value))throw std::runtime_error("Non-finite vertex color.");
             out.tangents.insert(out.tangents.end(),tangent,tangent+4);
             out.colors.insert(out.colors.end(),color,color+4);
-            float u = 0, t = 0;
-            if (out.hasUV) {
-                const auto* uv = p + o.uv;
-                if ((uvType & 63) == 25) {
-                    const bool signedValue = (uvType & 0x100) != 0;
-                    u = signedValue ? float(static_cast<int16_t>(ReadBE16(uv))) : float(ReadBE16(uv));
-                    t = signedValue ? float(static_cast<int16_t>(ReadBE16(uv+2))) : float(ReadBE16(uv+2));
-                    if (!(uvType & 0x200)) {
-                        const float divisor = signedValue ? 32767.f : 65535.f;
-                        u = std::max(-1.f, u / divisor); t = std::max(-1.f, t / divisor);
-                    }
-                } else if ((uvType & 63) == 37) {
-                    u = ReadBEf32(uv); t = ReadBEf32(uv + 4);
-                } else throw std::runtime_error("Unsupported UV vertex format.");
-                if (!std::isfinite(u) || !std::isfinite(t)) throw std::runtime_error("Non-finite model UV.");
+            const auto uv=out.hasUV?DecodeUV(p+o.uv,uvType):std::array<float,2>{};
+            out.texcoords.insert(out.texcoords.end(),uv.begin(),uv.end());
+            for(size_t i=0;i<uvOffsets.size();++i){
+                const auto value=uvOffsets[i]>=0?DecodeUV(p+uvOffsets[i],uvTypes[i]):std::array<float,2>{};
+                out.shaderUV[i].insert(out.shaderUV[i].end(),value.begin(),value.end());
             }
-            out.texcoords.push_back(u); out.texcoords.push_back(t);
             if (o.nrm >= 0)
             {
                 float nx, ny, nz;
@@ -321,6 +332,7 @@ std::vector<ModelMesh> LoadModelGeometry(const PKPackage& package, const CMChunk
         ModelMesh mesh;
         DecodeMesh(vb->data.data(), vb->data.size(), ib->data.data(), ib->data.size(), desc, mesh, materials);
         if (mesh.positions.empty() || mesh.indices.empty()) throw std::runtime_error("Mesh has no valid triangles or its buffers are truncated.");
+        for(const auto& uv:mesh.shaderUV)bytes+=uv.size()*sizeof(float);
         bytes += (mesh.positions.size() + mesh.normals.size() + mesh.texcoords.size() + mesh.tangents.size() + mesh.colors.size()) * sizeof(float) + mesh.indices.size() * sizeof(uint32_t);
         if (bytes > 128 * 1024 * 1024) throw std::runtime_error("Model exceeds the 128 MiB preview budget.");
         meshes.push_back(std::move(mesh));

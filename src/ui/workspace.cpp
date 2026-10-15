@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 #include "texture/texture_actions.h"
+#include "platform/file_io.h"
 #include <GLFW/glfw3.h>
 
 namespace
@@ -138,6 +139,7 @@ void Workspace::DrawFields()
 
 void Workspace::AddLog(const std::string& message)
 {
+    AppendDebugLog(message);
     log.push_back(message);
     if (log.size() > 200) log.erase(log.begin());
     logChanged = true;
@@ -213,6 +215,12 @@ void Workspace::Draw()
     ImGui::BeginChild("Debug log", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
     const bool follow = ImGui::GetScrollY() >= ImGui::GetScrollMaxY();
     ImGui::TextUnformatted("Debug log");
+    ImGui::SetItemTooltip("Saved to %s",DebugLogPath().u8string().c_str());
+    ImGui::SameLine();
+    if(ImGui::SmallButton("Copy log")){
+        std::string text;for(const auto& message:log)text+=message+"\n";
+        ImGui::SetClipboardText(text.c_str());
+    }
     ImGui::Separator();
     for (const auto& message : log) ImGui::TextWrapped("%s", message.c_str());
     if (logChanged && follow) ImGui::SetScrollHereY(1);

@@ -7,6 +7,7 @@
 #include "ui/app_menu.h"
 #include "platform/file_dialog.h"
 #include "pkzgui_font.h"
+#include "platform/file_io.h"
 
 namespace
 {
@@ -86,6 +87,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    AppendDebugLog(std::string("Starting ")+std::filesystem::absolute(std::filesystem::u8path(argv[0])).u8string()+" | build " __DATE__ " " __TIME__+" | shader conversion "+(ShaderCompilerAvailable()?"enabled":"disabled"));
     Workspace workspace;
     if (argc > 1)
         workspace.session.BeginLoad(argv[1]);

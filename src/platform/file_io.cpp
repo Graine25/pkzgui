@@ -2,6 +2,11 @@
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
+#include <cstdlib>
+#include <chrono>
+#include <ctime>
+#include <iomanip>
+#include <mutex>
 
 std::vector<uint8_t> ReadFile(const std::filesystem::path& path)
 {
@@ -32,4 +37,39 @@ std::string SanitizeFileName(std::string name)
         if (std::string("/\\:*?\"<>|").find(c) != std::string::npos || static_cast<unsigned char>(c) < 32)
             c = '_';
     return name;
+}
+
+std::filesystem::path DebugLogPath()
+{
+#ifdef _WIN32
+    const char* root=std::getenv("LOCALAPPDATA");
+    return root?std::filesystem::u8path(root)/"GSX"/"logs"/"gsx.log":std::filesystem::path{};
+#else
+    const char* home=std::getenv("HOME");
+    if(!home)return {};
+#ifdef __APPLE__
+    return std::filesystem::u8path(home)/"Library"/"Logs"/"GSX"/"gsx.log";
+#else
+    const char* state=std::getenv("XDG_STATE_HOME");
+    return (state?std::filesystem::u8path(state):std::filesystem::u8path(home)/".local"/"state")/"gsx"/"gsx.log";
+#endif
+#endif
+}
+
+void AppendDebugLog(const std::string& message)
+{
+    static std::mutex mutex;
+    const std::lock_guard<std::mutex> lock(mutex);
+    try {
+        const auto path=DebugLogPath();
+        if(path.empty())return;
+        std::filesystem::create_directories(path.parent_path());
+        if(std::filesystem::exists(path) && std::filesystem::file_size(path)>2*1024*1024){
+            auto previous=path;previous.replace_filename("gsx.previous.log");
+            std::filesystem::remove(previous);std::filesystem::rename(path,previous);
+        }
+        std::ofstream output(path,std::ios::app);
+        const auto now=std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        output<<std::put_time(std::localtime(&now),"%Y-%m-%d %H:%M:%S")<<" "<<message<<"\n";
+    }catch(const std::exception&){}
 }

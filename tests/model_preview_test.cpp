@@ -214,12 +214,10 @@ int GLTests()
 {
     if (!glfwInit()) return 77;
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-#ifdef __APPLE__
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3); glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+#ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
-#else
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3); glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 #endif
     GLFWwindow* window = glfwCreateWindow(600, 480, "Model regression", nullptr, nullptr);
     if (!window) { glfwTerminate(); return 77; }
@@ -266,7 +264,7 @@ int GLTests()
         if (isBuffer(i)) buffers.insert(i);
         if (isFbo(i) && i != fbo[0] && i != fbo[1]) modelFbo = i;
     }
-    Check(buffers.size() == 4 && modelFbo != 0, "Mesh buffers were not retained");
+    Check(buffers.size() == 6 && modelFbo != 0, "Mesh buffers were not retained");
     bindFbo(0x8CA8, modelFbo);
     std::array<unsigned char, 256 * 256 * 4> image{};
     glReadPixels(0, 0, 256, 256, GL_RGBA, GL_UNSIGNED_BYTE, image.data());
@@ -354,10 +352,64 @@ int GLTests()
     Check(changed != before && changed[0] > 240 && changed[1] < 10 && changed[2] > 240, "Applied texture did not retain the replacement pixels");
     preview.Update(textured); draw();
     Check(colorCount(false) > 100, "Package edit invalidated the model or reset the textured mode");
+    // Guest replacements must keep the last valid program and isolate all touched GL state.
+    auto& materialBytes = textured.package->rootChunks[0].children.back().children[0].data;
+    materialBytes[244 + 140 + 24] = 0;
+    ++textured.revision; preview.Update(textured);
+    ShaderAsset guest;
+    guest.vertexGLSL = R"(#version 150
+in vec3 gsxPosition;
+layout(std140) uniform type_GsxVertexBlock { vec4 registers[256]; };
+void main() {
+    vec4 p = vec4(gsxPosition, 1.0);
+    gl_Position = vec4(dot(p,registers[0]),dot(p,registers[1]),dot(p,registers[2]),dot(p,registers[3]));
+})";
+    guest.pixelGLSL = "#version 150\nout vec4 color; void main(){color=vec4(1,0,1,1);}";
+    for (uint32_t i=0;i<4;++i) guest.constants.push_back({false,i,1,"kVS_ViewProj"+std::to_string(i)});
+    const auto shaderPath = (dir / "replacement.gsxshader").u8string();
+    WriteShaderAsset(guest,shaderPath);
+    preview.LoadShaderPreview(0,shaderPath);
+    unsigned textures[2], uniformBuffers[3]; glGenTextures(2,textures);
+    const auto bindBuffer = Proc<void(*)(unsigned,unsigned)>("glBindBuffer");
+    const auto bindBase = Proc<void(*)(unsigned,unsigned,unsigned)>("glBindBufferBase");
+    const auto getIndexed = Proc<void(*)(unsigned,unsigned,int*)>("glGetIntegeri_v");
+    Proc<void(*)(int,unsigned*)>("glGenBuffers")(3,uniformBuffers);
+    for (unsigned i=0;i<3;++i) bindBase(0x8A11,i,uniformBuffers[i]);
+    for (unsigned i=0;i<2;++i) { activeTexture(0x84C0+(i?15:2)); glBindTexture(GL_TEXTURE_2D,textures[i]); }
+    activeTexture(0x84C0); draw();
+    for (unsigned i=0;i<3;++i) { getIndexed(0x8A28,i,&saved); Check(saved==int(uniformBuffers[i]),"Guest shader leaked a UBO binding"); }
+    glGetIntegerv(0x8A28,&saved); Check(saved==int(uniformBuffers[2]),"Guest shader leaked the global UBO binding");
+    for (unsigned i=0;i<2;++i) {
+        activeTexture(0x84C0+(i?15:2)); glGetIntegerv(GL_TEXTURE_BINDING_2D,&saved);
+        Check(saved==int(textures[i]),"Guest shader leaked a texture binding");
+    }
+    activeTexture(0x84C0); Check(colorCount(false)>100,"Guest shader replacement did not draw");
+    auto broken=guest; broken.pixelGLSL="invalid shader source";
+    WriteShaderAsset(broken,shaderPath);
+    bool rejected=false;
+    try { preview.LoadShaderPreview(0,shaderPath); } catch (const std::exception&) { rejected=true; }
+    Check(rejected,"Invalid replacement shader was accepted"); draw();
+    Check(colorCount(false)>100,"A failed replacement discarded the last valid shader");
+    if (ShaderCompilerAvailable()) {
+        guest.vertexHLSL=R"(float4 shaderMain(float3 p : POSITION0) : SV_Position {
+            float4 v=float4(p,1);
+            return float4(dot(v,gsxVS[0]),dot(v,gsxVS[1]),dot(v,gsxVS[2]),dot(v,gsxVS[3])); })";
+        guest.pixelHLSL="float4 shaderMain() : SV_Target0 {return float4(0,1,0,1);}";
+        WriteShaderAsset(guest,shaderPath);
+        const auto edited=CompileShaderEdits(guest,shaderPath+".vert.hlsl",shaderPath+".frag.hlsl");
+        WriteShaderAsset(edited,shaderPath); preview.LoadShaderPreview(0,shaderPath); draw();
+        Check(colorCount(true)>100,"HLSL edits did not reach the guest preview");
+    }
+    auto bytes=ReadFile(shaderPath); bytes.pop_back(); WriteFile(shaderPath,bytes);
+    rejected=false; try { ReadShaderAsset(shaderPath); } catch (const std::exception&) { rejected=true; }
+    Check(rejected,"Truncated shader asset was accepted");
+    for (unsigned i=0;i<3;++i) bindBase(0x8A11,i,0);
+    bindBuffer(0x8A11,0); Proc<void(*)(int,const unsigned*)>("glDeleteBuffers")(3,uniformBuffers);
+    glDeleteTextures(2,textures);
     preview.Clear(); std::filesystem::remove_all(dir);
     bindFbo(0x8CA9, 0); bindFbo(0x8CA8, 0); deleteFbo(2, fbo);
     ImGui::DestroyContext(); glfwDestroyWindow(window); glfwTerminate();
-    std::puts("PASS: visible model, GL state isolation, retained buffers, cached frames, resize, textured rendering, PNG preview/reset/apply and shutdown cleanup");
+    std::puts("PASS: visible model, GL state isolation, retained buffers, cached frames, resize, textured rendering, PNG preview/reset/apply, guest replacement, failed compile retention, HLSL edits and shutdown cleanup");
     return 0;
 }
 

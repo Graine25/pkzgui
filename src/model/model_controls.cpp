@@ -148,4 +148,5 @@ void ModelPreview::DrawActions(PackageSession& session)
             if (!path.empty()) { ExportModelShaders(material, path); Log("Shader containers and binding metadata exported for XenosRecomp: " + path); }
         }
     } catch (const std::exception& ex) { Log("Model texture/export error: " + std::string(ex.what())); }
+    DrawShaderActions();
 }

@@ -29,6 +29,7 @@ struct ModelSampler
     uint32_t crc = 0;
     uint8_t addressMode = 0;
     std::string sourcePath;
+    std::optional<CMChunkResourceHeader> texture;
 };
 struct ModelMaterial
 {

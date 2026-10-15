@@ -126,6 +126,9 @@ std::vector<ModelMaterial> LoadModelMaterials(const PKPackage& package, const CM
     std::vector<CMChunkResourceHeader> headers;
     for (const auto& root : package.rootChunks) TextureHeaders(root, headers);
     for (auto& m : result) {
+        for (auto& sampler : m.samplers)
+            for (const auto& h : headers)
+                if (h.GetCRC() == sampler.crc && sampler.crc && (!sampler.texture || (h.GetLanguageMask() == resource.GetLanguageMask() && h.GetQualityLevel() == resource.GetQualityLevel()))) sampler.texture = h;
         for (const auto& h : headers) {
             if (h.GetCRC() != m.textureCRC || !m.textureCRC) continue;
             if (!m.texture || (h.GetLanguageMask() == resource.GetLanguageMask() && h.GetQualityLevel() == resource.GetQualityLevel())) m.texture = h;

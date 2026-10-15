@@ -6,7 +6,8 @@ struct ModelMesh
     std::vector<float> positions;   // xyz
     std::vector<float> normals;     // xyz
     std::vector<uint32_t> indices;
-    std::vector<float> texcoords;
+    std::vector<float> texcoords, tangents, colors;
+    std::string shaderVertexError;
     bool hasUV = false, integerUV = false;
     uint32_t material = 0;
 };

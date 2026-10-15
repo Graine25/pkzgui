@@ -14,7 +14,25 @@ if(WIN32)
         RUNTIME DESTINATION . LIBRARY DESTINATION .)
 endif()
 
+if(GSX_SHADER_COMPILER)
+    install(IMPORTED_RUNTIME_ARTIFACTS Microsoft::DirectXShaderCompiler
+        RUNTIME DESTINATION . LIBRARY DESTINATION .)
+    foreach(dependency reeot-XenosRecomp spirv-cross
+            reeot-XenosRecomp/thirdparty/dxc-bin reeot-XenosRecomp/thirdparty/fmt
+            reeot-XenosRecomp/thirdparty/xxHash reeot-XenosRecomp/thirdparty/zstd)
+        file(GLOB shader_licenses "${PROJECT_SOURCE_DIR}/external/${dependency}/LICENSE*"
+            "${PROJECT_SOURCE_DIR}/external/${dependency}/COPYING*")
+        foreach(license IN LISTS shader_licenses)
+            if(IS_DIRECTORY "${license}")
+                install(DIRECTORY "${license}" DESTINATION "licenses/${dependency}")
+            else()
+                install(FILES "${license}" DESTINATION "licenses/${dependency}")
+            endif()
+        endforeach()
+    endforeach()
+endif()
 install(FILES README.md DESTINATION docs)
+install(DIRECTORY docs/ DESTINATION docs)
 install(DIRECTORY licenses/ DESTINATION licenses)
 foreach(dependency imgui glfw nativefiledialog-extended miniaudio FFmpeg
         PKZLib/contrib/zlib PKZLib/thirdparty/textures/libsquish

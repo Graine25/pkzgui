@@ -41,6 +41,9 @@ add_executable(pkzgui
     model/model_material.cpp
     model/model_geometry.cpp
     model/model_shader_export.cpp
+    shader/shader_asset.cpp
+    shader/shader_program.cpp
+    model/model_shaders.cpp
     ui/app_menu.cpp
     ui/workspace.cpp
     ui/workspace_actions.cpp
@@ -95,6 +98,9 @@ if(PKZGUI_BUILD_TESTS)
         model/model_material.cpp
         model/model_geometry.cpp
         model/model_shader_export.cpp
+        shader/shader_asset.cpp
+        shader/shader_program.cpp
+        model/model_shaders.cpp
         package/resource_selection.cpp
         texture/texture_actions.cpp
         platform/file_io.cpp
@@ -106,4 +112,23 @@ if(PKZGUI_BUILD_TESTS)
     add_test(NAME model_selection COMMAND model_preview_test)
     add_test(NAME model_render COMMAND model_preview_test --gl)
     set_tests_properties(model_render PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+
+if(GSX_SHADER_COMPILER)
+    foreach(target pkzgui model_preview_test)
+        if(TARGET ${target})
+            target_compile_definitions(${target} PRIVATE GSX_SHADER_COMPILER)
+            target_link_libraries(${target} PRIVATE gsx_shader_compiler)
+            add_custom_command(TARGET ${target} POST_BUILD
+                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "$<TARGET_FILE:Microsoft::DirectXShaderCompiler>" "$<TARGET_FILE_DIR:${target}>")
+            if(APPLE)
+                set_property(TARGET ${target} APPEND PROPERTY BUILD_RPATH "@loader_path")
+                set_property(TARGET ${target} APPEND PROPERTY INSTALL_RPATH "@loader_path")
+            elseif(UNIX)
+                set_property(TARGET ${target} APPEND PROPERTY BUILD_RPATH "$ORIGIN")
+                set_property(TARGET ${target} APPEND PROPERTY INSTALL_RPATH "$ORIGIN")
+            endif()
+        endif()
+    endforeach()
 endif()

@@ -127,7 +127,8 @@ namespace {
         if (static_cast<size_t>(d.idxoff) * 2 + static_cast<size_t>(d.nidx) * 2 > ibSize) return;
 
         Offsets o = AttrOffsets(d.fmt);
-        int positionOffset = 0;
+        int positionOffset = 0, tangentOffset = -1, colorOffset = -1;
+        uint32_t tangentType = 0, colorType = 0;
         uint32_t normalType = 16, uvType = 25 | 0x300;
         const ModelMaterial* material = d.mat < materials.size() ? &materials[d.mat] : nullptr;
         if (material) {
@@ -144,6 +145,8 @@ namespace {
                     if (type != 57) throw std::runtime_error("Unsupported packed position format.");
                     positionOffset = a.offset; position = true;
                 }
+                if (a.usage == 6 && a.index == 0) { tangentOffset = a.offset; tangentType = a.type; }
+                if (a.usage == 10 && a.index == 0) { colorOffset = a.offset; colorType = a.type; }
                 if (a.usage == 3 && a.index == 0) { o.nrm = a.offset; normalType = a.type; }
                 if (a.usage == 5 && a.index == material->uvSet) { o.uv = a.offset; uvType = a.type; }
             }
@@ -152,6 +155,8 @@ namespace {
         out.hasUV = o.uv >= 0;
         out.integerUV = (uvType & 63) == 25 && (uvType & 0x200);
         out.texcoords.reserve(size_t(d.nv) * 2);
+        out.tangents.reserve(size_t(d.nv) * 4);
+        out.colors.reserve(size_t(d.nv) * 4);
         out.positions.reserve(static_cast<size_t>(d.nv) * 3);
         out.normals.reserve(static_cast<size_t>(d.nv) * 3);
 
@@ -166,6 +171,28 @@ namespace {
             out.positions.push_back(x);
             out.positions.push_back(y);
             out.positions.push_back(z);
+            float tangent[4] = {1,0,0,1}, color[4] = {1,1,1,1};
+            if (tangentOffset >= 0) {
+                const auto* t = p + tangentOffset;
+                if ((tangentType & 63) == 7) {
+                    const auto word = ReadBE32(t);
+                    for(int k=0;k<3;++k) { int v=(word>>(k*10))&1023; if(v>511)v-=1024; tangent[k]=std::max(-1.f,v/511.f); }
+                } else if ((tangentType & 63) == 16) UnpackNormal(ReadBE32(t),tangent[0],tangent[1],tangent[2]);
+                else if ((tangentType & 63) == 57 || (tangentType & 63) == 38) {
+                    for(int k=0;k<((tangentType&63)==38?4:3);++k)tangent[k]=ReadBEf32(t+k*4);
+                } else out.shaderVertexError="Unsupported tangent layout for the game shader.";
+            }
+            if (colorOffset >= 0) {
+                const auto* c = p + colorOffset;
+                if ((colorType & 63) == 6 && ((colorType >> 16) & 255) == 0x18) {
+                    color[0]=c[1]/255.f; color[1]=c[2]/255.f; color[2]=c[3]/255.f; color[3]=c[0]/255.f;
+                } else if ((colorType & 63) == 38) for(int k=0;k<4;++k)color[k]=ReadBEf32(c+k*4);
+                else out.shaderVertexError="Unsupported vertex color layout for the game shader.";
+            }
+            for(float value:tangent)if(!std::isfinite(value))throw std::runtime_error("Non-finite model tangent.");
+            for(float value:color)if(!std::isfinite(value))throw std::runtime_error("Non-finite vertex color.");
+            out.tangents.insert(out.tangents.end(),tangent,tangent+4);
+            out.colors.insert(out.colors.end(),color,color+4);
             float u = 0, t = 0;
             if (out.hasUV) {
                 const auto* uv = p + o.uv;
@@ -294,7 +321,7 @@ std::vector<ModelMesh> LoadModelGeometry(const PKPackage& package, const CMChunk
         ModelMesh mesh;
         DecodeMesh(vb->data.data(), vb->data.size(), ib->data.data(), ib->data.size(), desc, mesh, materials);
         if (mesh.positions.empty() || mesh.indices.empty()) throw std::runtime_error("Mesh has no valid triangles or its buffers are truncated.");
-        bytes += (mesh.positions.size() + mesh.normals.size() + mesh.texcoords.size()) * sizeof(float) + mesh.indices.size() * sizeof(uint32_t);
+        bytes += (mesh.positions.size() + mesh.normals.size() + mesh.texcoords.size() + mesh.tangents.size() + mesh.colors.size()) * sizeof(float) + mesh.indices.size() * sizeof(uint32_t);
         if (bytes > 128 * 1024 * 1024) throw std::runtime_error("Model exceeds the 128 MiB preview budget.");
         meshes.push_back(std::move(mesh));
     }

@@ -269,7 +269,6 @@ namespace {
     };
 }
 
-#ifdef __APPLE__
 static const char* kVertexShader = R"(#version 150
 in vec3 aPos;
 in vec3 aNrm;
@@ -316,54 +315,7 @@ void main() {
     fragColor = vec4(ambient + diffuse + specular, 1.0);
 }
 )";
-#else
-static const char* kVertexShader = R"(#version 130
-in vec3 aPos;
-in vec3 aNrm;
-in vec2 aUV;
-uniform float uUVDivisor;
-out vec2 vUV;
-uniform mat4 uMVP;
-uniform mat4 uModel;
-out vec3 vNrm;
-out vec3 vWorld;
-void main() {
-    vec4 world = uModel * vec4(aPos, 1.0);
-    vWorld = world.xyz;
-    vUV = aUV / uUVDivisor;
-    vNrm = mat3(uModel) * aNrm;
-    gl_Position = uMVP * vec4(aPos, 1.0);
-}
-)";
 
-static const char* kFragmentShader = R"(#version 130
-in vec3 vNrm;
-in vec3 vWorld;
-in vec2 vUV;
-uniform sampler2D uTexture;
-uniform bool uTextured;
-uniform bool uAlphaCutout;
-uniform vec3 uLightDir;
-uniform vec3 uViewPos;
-uniform vec3 uColor;
-out vec4 fragColor;
-void main() {
-    vec3 n = normalize(vNrm);
-    vec3 l = normalize(-uLightDir);
-    float diff = max(dot(n, l), 0.0);
-    vec3 viewDir = normalize(uViewPos - vWorld);
-    vec3 halfDir = normalize(l + viewDir);
-    float spec = pow(max(dot(n, halfDir), 0.0), 32.0);
-    vec4 albedo = uTextured ? texture(uTexture, vUV) : vec4(1.0);
-    if (uTextured && uAlphaCutout && albedo.a < 0.3) discard;
-    vec3 base = uColor * albedo.rgb;
-    vec3 ambient = 0.35 * base;
-    vec3 diffuse = 0.65 * diff * base;
-    vec3 specular = 0.25 * spec * vec3(1.0);
-    fragColor = vec4(ambient + diffuse + specular, 1.0);
-}
-)";
-#endif
 
 namespace {
 
@@ -446,17 +398,21 @@ ModelPreview::~ModelPreview() { Clear(); }
 
 void ModelPreview::DestroyGL()
 {
+    materialShaders.clear();
     if (!gl3::loaded) {
         colorTex = depthRbo = fbo = program = 0;
         fboW = fboH = 0;
+        shaderTextures.clear();
         return;
     }
     for (const auto& mesh : gpuMeshes) {
         gl3::DeleteVertexArrays(1, &mesh.vao);
-        const unsigned int buffers[] = {mesh.positions, mesh.normals, mesh.indices, mesh.texcoords};
-        gl3::DeleteBuffers(4, buffers);
+        const unsigned int buffers[] = {mesh.positions, mesh.normals, mesh.indices, mesh.texcoords, mesh.tangents, mesh.colors};
+        gl3::DeleteBuffers(6, buffers);
     }
     gpuMeshes.clear();
+    for (const auto& textures : shaderTextures) for (const auto& texture : textures) if (texture.texture) glDeleteTextures(1, &texture.texture);
+    shaderTextures.clear();
     for (auto& texture : materialTextures) {
         if (texture.texture) glDeleteTextures(1, &texture.texture);
         if (texture.retexture) glDeleteTextures(1, &texture.retexture);
@@ -602,6 +558,8 @@ bool ModelPreview::DecodeGeometry(const PackageSession& session)
 
     if (resource) materials = LoadModelMaterials(*session.package, *resource);
     materialTextures.resize(materials.size());
+    shaderTextures.resize(materials.size());
+    for (size_t i=0;i<materials.size();++i) { materialShaders.push_back(std::make_unique<ShaderProgram>()); shaderTextures[i].resize(materials[i].samplers.size()); }
     if (!resource) return false;
     meshes = LoadModelGeometry(*session.package, *resource, materials);
     if (meshes.empty()) throw std::runtime_error("No drawable mesh in this geometry resource.");
@@ -620,9 +578,13 @@ bool ModelPreview::DecodeGeometry(const PackageSession& session)
 
 void ModelPreview::Update(const PackageSession& session)
 {
+    PollShaderJob(session);
     if (selected == session.selected && package == session.package.get() && revision == session.revision)
         return;
     const bool sameModel = selected == session.selected && package == session.package.get();
+    auto oldShaders = sameModel ? std::move(materialShaders) : std::vector<std::unique_ptr<ShaderProgram>>{};
+    std::vector<std::string> oldNames;
+    if(sameModel)for(const auto& material:materials)oldNames.push_back(material.name);
     const float oldYaw = yaw, oldPitch = pitch, oldDistance = distance;
     const int oldMaterial = materialIndex;
     Clear();
@@ -641,6 +603,7 @@ void ModelPreview::Update(const PackageSession& session)
             throw std::runtime_error("Model preview currently supports big-endian geometry only.");
         if (DecodeGeometry(session)) {
             active = true;
+            if(sameModel)for(size_t i=0;i<std::min(oldShaders.size(),materialShaders.size());++i)if(oldNames[i]==materials[i].name)materialShaders[i]=std::move(oldShaders[i]);
             Log("Model " + name + ": " + std::to_string(meshCount) + " meshes, " + std::to_string(vertexCount) + " vertices, " + std::to_string(triangleCount) + " triangles (static preview).");
             if (sameModel) { yaw = oldYaw; pitch = oldPitch; distance = oldDistance; materialIndex = std::clamp(oldMaterial, 0, std::max(0, int(materials.size()) - 1)); }
         }
@@ -685,6 +648,13 @@ void ModelPreview::UploadMeshes()
         gl3::BufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(mesh.texcoords.size() * sizeof(float)), mesh.texcoords.data(), GL_STATIC_DRAW);
         gl3::EnableVertexAttribArray(2);
         gl3::VertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+        const std::vector<float>* extra[] = {&mesh.tangents, &mesh.colors};
+        unsigned int* buffers[] = {&gpu.tangents, &gpu.colors};
+        for (unsigned int i=0;i<2;++i) {
+            gl3::GenBuffers(1,buffers[i]); gl3::BindBuffer(GL_ARRAY_BUFFER,*buffers[i]);
+            gl3::BufferData(GL_ARRAY_BUFFER,static_cast<GLsizeiptr>(extra[i]->size()*sizeof(float)),extra[i]->data(),GL_STATIC_DRAW);
+            gl3::EnableVertexAttribArray(3+i);gl3::VertexAttribPointer(3+i,4,GL_FLOAT,GL_FALSE,0,nullptr);
+        }
         gl3::BindBuffer(GL_ELEMENT_ARRAY_BUFFER, gpu.indices);
         gl3::BufferData(GL_ELEMENT_ARRAY_BUFFER,
             static_cast<GLsizeiptr>(mesh.indices.size() * sizeof(uint32_t)),
@@ -697,6 +667,8 @@ void ModelPreview::RenderScene(int w, int h)
 {
     gl3::EnsureLoaded();
     const ModelGLState savedState;
+    std::unique_ptr<ShaderGLState> shaderState;
+    if (textured && std::any_of(materialShaders.begin(),materialShaders.end(),[](const auto& shader){return shader->enabled;})) shaderState=std::make_unique<ShaderGLState>();
     EnsureProgram();
     EnsureFBO(w, h);
     if (gpuMeshes.empty()) UploadMeshes();
@@ -749,6 +721,27 @@ void ModelPreview::RenderScene(int w, int h)
     {
         const ModelMesh& mesh = meshes[mi];
         if (mesh.indices.empty()) continue;
+        if (textured && mesh.material < materialShaders.size() && materialShaders[mesh.material]->enabled) {
+            uint32_t signs=0, alphaSigns=0;
+            const auto& mat=materials[mesh.material];
+            for (unsigned slot=0;slot<16;++slot) {
+                unsigned texture=0;
+                if (slot < mat.samplers.size()) {
+                    texture=ShaderTextureID(mesh.material,slot);
+                    const auto format=XenosTexture::D3DFormat::Decode(shaderTextures[mesh.material][slot].format);
+                    if (format.signX==2) signs|=1u<<slot;
+                    if (format.signX==3) signs|=1u<<(16+slot);
+                    if (format.signW==2) alphaSigns|=1u<<(16+slot);
+                }
+                gl3::ActiveTexture(0x84C0+slot);glBindTexture(GL_TEXTURE_2D,texture?texture:whiteTexture);
+            }
+            materialShaders[mesh.material]->Bind(mvp,view,mat.color,mat.alphaCutout,signs,alphaSigns);
+            gl3::BindVertexArray(gpuMeshes[mi].vao);
+            glDrawElements(GL_TRIANGLES,static_cast<int>(mesh.indices.size()),GL_UNSIGNED_INT,nullptr);
+            continue;
+        }
+        gl3::ActiveTexture(0x84C0);
+        gl3::UseProgram(program);
         gl3::Uniform1f(gl3::GetUniformLocation(program, "uUVDivisor"), mesh.integerUV ? uvDivisor : 1.f);
         const unsigned int texture = textured && mesh.hasUV ? MaterialTextureID(mesh.material) : 0;
         glBindTexture(GL_TEXTURE_2D, texture ? texture : whiteTexture);

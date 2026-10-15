@@ -19,3 +19,9 @@
 [submodule "external/miniaudio"]
 	path = external/miniaudio
 	url = https://github.com/mackron/miniaudio.git
+[submodule "external/spirv-cross"]
+	path = external/spirv-cross
+	url = https://github.com/KhronosGroup/SPIRV-Cross.git
+[submodule "external/reeot-XenosRecomp"]
+	path = external/reeot-XenosRecomp
+	url = https://github.com/graine25/reeot-XenosRecomp.git

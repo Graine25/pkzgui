@@ -191,7 +191,7 @@ void Workspace::Draw()
     ImGui::TextUnformatted("Resource view");
     ImGui::Separator();
     if (preview.active) preview.Draw();
-    else if (modelPreview.active) modelPreview.Draw();
+    else if (modelPreview.active) modelPreview.Draw(&session);
     else if (audio)
     {
         ImGui::TextWrapped("%s", audio->name.c_str());

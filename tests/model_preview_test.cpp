@@ -1,6 +1,9 @@
 #include "model/model_preview.h"
 #include "package/resource_selection.h"
 #include "imgui.h"
+#include "texture/texture_actions.h"
+#include "platform/file_io.h"
+#include "BaseUtils/BUPng.h"
 #include <GLFW/glfw3.h>
 #include <array>
 #include <cstdio>
@@ -45,6 +48,121 @@ PackageSession Fixture()
     roots.push_back(std::move(audio));
     session.selected = &roots[0];
     return session;
+}
+
+CMChunk TestMaterial(uint32_t textureCRC)
+{
+    auto chunk = CMChunk::Leaf(0x331, 64, std::vector<uint8_t>(244));
+    const auto put = [&](size_t offset, uint32_t value) {
+        for (int i = 0; i < 4; ++i) chunk.data[offset+i] = uint8_t(value >> (24 - 8*i));
+    };
+    std::memcpy(chunk.data.data(), "fixture", 7);
+    for (size_t offset : {100,104,108,112}) put(offset, 1);
+    chunk.Append(textureCRC); chunk.Append<uint32_t>(0); chunk.Append<uint32_t>(0);
+    chunk.AppendBytes(std::string(128, 'x').data(), 128);
+    for (int i = 0; i < 4; ++i) chunk.Append(1.f);
+    chunk.Append(0.f); chunk.Append<uint32_t>(0x00000000); chunk.Append<uint32_t>(0x01000000); chunk.Append<uint32_t>(0);
+    const size_t pass = chunk.data.size(); chunk.data.resize(pass + 188); put(pass, 0x42);
+    chunk.Append<uint32_t>(88);
+    const size_t decl = chunk.data.size(); chunk.data.resize(decl + 88); put(decl + 24, 3);
+    for (int i = 0; i < 3; ++i) {
+        const size_t at = decl + 52 + i * 12;
+        put(at, i == 0 ? 4 : (i == 1 ? 16 : 24));
+        put(at+4, i == 0 ? 0x2a23b9 : (i == 1 ? 0x2a2190 : 0x2c2359));
+        chunk.data[at+9] = i == 0 ? 0 : (i == 1 ? 3 : 5);
+        chunk.data[at+10] = i == 2 ? 1 : 0;
+    }
+    for (int shader = 0; shader < 2; ++shader) { chunk.Append<uint32_t>(1); chunk.Append<uint32_t>(0); chunk.Append<uint32_t>(0); }
+    return chunk;
+}
+
+PackageSession TexturedFixture()
+{
+    auto session = Fixture();
+    auto& resource = session.package->rootChunks[0];
+    auto material = CMChunk::Container(0x321, 3); material.AddChild(TestMaterial(0));
+    resource.AddChild(std::move(material));
+    auto& lod = resource.children[1];
+    auto& desc = lod.children[0];
+    desc.data.clear();
+    for (uint32_t value : {0u,0u,32u,0x42u,3u,0u,3u,0u,0u,0u,0u,0u}) desc.Append(value);
+    auto& vb = lod.children[1]; vb.data.clear();
+    for (int i = 0; i < 3; ++i) {
+        vb.Append(77.f);
+        vb.Append(i == 0 ? -1.f : (i == 1 ? 1.f : 0.f)); vb.Append(i == 2 ? 1.f : 0.f); vb.Append(0.f);
+        vb.Append<uint32_t>(0x7FC00000); vb.Append<uint32_t>(0);
+        vb.Append<int16_t>(i == 1 ? 1024 : 0); vb.Append<int16_t>(i == 2 ? 1024 : 0); vb.Append<uint32_t>(0);
+    }
+    std::vector<uint8_t> pixels(16*16*4, 0);
+    for (size_t i = 0; i < pixels.size(); i += 4) { pixels[i+1] = 255; pixels[i+3] = 0; }
+    const auto texture = RZTexture::FromRGBA8("fixture diffuse", pixels.data(),16,16);
+    resource.children.back().children[0] = TestMaterial(texture.nameCRC);
+    auto root = CMChunk::Container(Root,1); auto library = CMChunk::Container(Gen_TextureLibrary,1);
+    library.AddChild(texture.BuildLibraryResource(0x123400)); root.AddChild(std::move(library));
+    auto post = texture.BuildPostLoadData(0x123400); post.offset = 0x123400; root.AddChild(std::move(post));
+    session.package->rootChunks.push_back(std::move(root)); session.selected = &session.package->rootChunks[0];
+    return session;
+}
+
+void MaterialTests()
+{
+    auto session = TexturedFixture(); ModelPreview preview; preview.Update(session);
+    Check(preview.error.empty(), preview.error.c_str());
+    Check(preview.Materials().size() == 1 && preview.Materials()[0].texture && preview.Materials()[0].texture->GetName() == "fixture diffuse", "Material CRC did not resolve its texture");
+    const auto& mesh = preview.Meshes().at(0);
+    Check(mesh.positions[0] == -1.f && mesh.positions[1] == 0.f && mesh.positions[3] == 1.f, "Declaration position offset was ignored");
+    Check(mesh.hasUV && mesh.texcoords[2] == 1024.f && mesh.texcoords[5] == 1024.f, "UV set 1 or integer short2 was decoded incorrectly");
+    Check(mesh.normals[2] > 0.99f, "Packed normal was decoded incorrectly");
+    auto& material = session.package->rootChunks[0].children.back().children[0];
+    material.data.pop_back(); ++session.revision; preview.Update(session);
+    Check(preview.error.find("Truncated") != std::string::npos, "Truncated shader record was accepted");
+    material = TestMaterial(0); material.data[244+140+23] = 255; ++session.revision; preview.Update(session);
+    Check(preview.error.empty() && !preview.Materials()[0].texture, "Missing diffuse sampler selected another texture");
+    auto image = CMChunk::Leaf(0,1,std::vector<uint8_t>(0x368+40));
+    const auto put = [&](size_t at, uint32_t value) { for (int i=0; i<4; ++i) image.data[at+i] = uint8_t(value >> (24-8*i)); };
+    put(0x368,0x102a1101); put(0x36c,36); put(0x370,4); put(0x368+36,0x12345678);
+    ModelShaderRecord record{0,0x368+36,0x368+36,4,0x368};
+    ModelMaterial exported; exported.name = "test\\shader\"\n"; exported.source = &image;
+    exported.passes.push_back({0,0,1,record,{}});
+    const auto container = ModelShaderContainer(exported,record);
+    Check(container.size() == 40 && container[0] == 0x10 && container[36] == 0x12, "Shader export did not concatenate the virtual and physical container");
+    image.data.pop_back(); bool rejected = false;
+    try { ModelShaderContainer(exported,record); } catch (const std::exception&) { rejected = true; }
+    Check(rejected, "Truncated shader physical data was exported");
+    std::puts("PASS: material CRCs, declarations, UV sets, packed normals, missing samplers and truncated shaders");
+}
+
+void ReferenceTests()
+{
+    auto inlineModel = Geometry("same name");
+    auto descriptors = inlineModel.children[1];
+    auto buffers = descriptors;
+    descriptors.children.erase(descriptors.children.begin()+1,descriptors.children.end());
+    descriptors.children[0].version = 8;
+    buffers.children.erase(buffers.children.begin());
+    auto info = CMChunk::Leaf(0x326,6,std::vector<uint8_t>(24));
+    descriptors.AddChild(info); buffers.AddChild(info);
+    auto geometry = CMChunk::Container(0x321,3); geometry.AddChild(std::move(descriptors));
+    auto library = CMChunk::Container(GenSub_Resource,1);
+    library.AddChild(CMChunkResourceHeader::Build(11,kCMResourceType_Geometry,31,0,0x2000,0,"same name"));
+    library.AddChild(std::move(geometry));
+    auto post = CMChunk::Container(Gen_PostLoadData,1); post.offset = 0x2000;
+    post.AddChild(library.children[0]); post.AddChild(std::move(buffers));
+    auto decoy = post; decoy.offset = 0x1000;
+    decoy.children[0] = CMChunkResourceHeader::Build(22,kCMResourceType_Geometry,31,0,0x1000,0,"same name");
+    auto root = CMChunk::Container(Root,1); root.AddChild(std::move(library)); root.AddChild(std::move(decoy)); root.AddChild(std::move(post));
+    PackageSession session; session.package = std::make_unique<PKPackage>(); session.package->rootChunks.push_back(std::move(root));
+    auto& children = session.package->rootChunks[0].children;
+    session.selected = &children[0]; ModelPreview preview; preview.Update(session);
+    Check(preview.error.empty() && preview.vertexCount == 3, "Resource-offset geometry lookup failed");
+    children[0].children[0] = CMChunkResourceHeader::Build(11,kCMResourceType_Geometry,31,0,0x1000,0,"same name");
+    ++session.revision; preview.Update(session);
+    Check(preview.error.find("does not match") != std::string::npos, "A same-name model at the wrong resource offset was used");
+    children[0].children[0] = CMChunkResourceHeader::Build(11,kCMResourceType_Geometry,31,0,0x2000,0,"same name");
+    children[2].children[1].children.back().data[15] = 1;
+    ++session.revision; preview.Update(session);
+    Check(preview.error.find("LOD") != std::string::npos, "Mismatched LOD descriptors and buffers were paired");
+    std::puts("PASS: exact resource offsets, same-name collisions and matching LOD indices");
 }
 
 void SelectionTests()
@@ -142,7 +260,7 @@ int GLTests()
         if (isBuffer(i)) buffers.insert(i);
         if (isFbo(i) && i != fbo[0] && i != fbo[1]) modelFbo = i;
     }
-    Check(buffers.size() == 3 && modelFbo != 0, "Mesh buffers were not retained");
+    Check(buffers.size() == 4 && modelFbo != 0, "Mesh buffers were not retained");
     bindFbo(0x8CA8, modelFbo);
     std::array<unsigned char, 256 * 256 * 4> image{};
     glReadPixels(0, 0, 256, 256, GL_RGBA, GL_UNSIGNED_BYTE, image.data());
@@ -162,14 +280,63 @@ int GLTests()
     for (unsigned id : buffers) Check(isBuffer(id), "Resize reallocated a mesh buffer");
     preview.Clear();
     for (unsigned id : buffers) Check(!isBuffer(id), "Clear leaked a mesh buffer");
+    auto textured = TexturedFixture();
+    preview.Update(textured); preview.SetTextured(true); draw();
+    unsigned texturedFbo = 0;
+    for (unsigned i = 1; i < 256; ++i) if (isFbo(i) && i != fbo[0] && i != fbo[1]) texturedFbo = i;
+    Check(texturedFbo != 0, "Textured preview has no framebuffer");
+    const auto colorCount = [&](bool green) {
+        bindFbo(0x8CA8, texturedFbo);
+        GLint attachment, imageW, imageH;
+        Proc<void(*)(unsigned,unsigned,unsigned,int*)>("glGetFramebufferAttachmentParameteriv")(0x8CA8,0x8CE0,0x8CD1,&attachment);
+        glBindTexture(GL_TEXTURE_2D,attachment);
+        glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&imageW); glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_HEIGHT,&imageH);
+        glBindTexture(GL_TEXTURE_2D,0);
+        std::vector<uint8_t> rgba(size_t(imageW)*imageH*4);
+        glReadPixels(0,0,imageW,imageH,GL_RGBA,GL_UNSIGNED_BYTE,rgba.data());
+        bindFbo(0x8CA8, fbo[1]);
+        size_t count = 0;
+        for (size_t i=0; i<rgba.size(); i+=4) {
+            if (green ? rgba[i+1] > rgba[i]+40 && rgba[i+1] > rgba[i+2]+40 : rgba[i] > rgba[i+1]+40 && rgba[i+2] > rgba[i+1]+40) ++count;
+        }
+        return count;
+    };
+    Check(colorCount(true) > 100, "Package texture missing, UV not uploaded, or non-opacity alpha discarded the mesh");
+    const auto dir = std::filesystem::temp_directory_path() / "pkzgui-model-preview-test";
+    std::filesystem::create_directories(dir);
+    const auto png = dir / "override.png";
+    const std::vector<uint8_t> replacement = {255,0,255,255};
+    WriteFile(png, BUPng::EncodeRGBA8(replacement.data(),1,1));
+    const auto selected = textured.selected;
+    const auto before = RZTexture::Load(*textured.package, *preview.Materials()[0].texture).DecodeLevel0();
+    const auto activeTexture = Proc<void(*)(unsigned)>("glActiveTexture");
+    unsigned sentinel; glGenTextures(1,&sentinel); activeTexture(0x84C3); glBindTexture(GL_TEXTURE_2D,sentinel);
+    glPixelStorei(GL_UNPACK_ALIGNMENT,8); glPixelStorei(0x0CF2,9); glPixelStorei(0x0CF3,2); glPixelStorei(0x0CF4,1);
+    preview.LoadPNG(0,png.u8string());
+    GLint saved; glGetIntegerv(0x84E0,&saved); Check(saved == 0x84C3, "PNG upload changed the active texture unit");
+    glGetIntegerv(GL_TEXTURE_BINDING_2D,&saved); Check(saved == GLint(sentinel), "PNG upload changed another texture unit's binding");
+    glGetIntegerv(0x0CF2,&saved); Check(saved == 9, "PNG upload leaked pixel unpack state");
+    glPixelStorei(GL_UNPACK_ALIGNMENT,4); glPixelStorei(0x0CF2,0); glPixelStorei(0x0CF3,0); glPixelStorei(0x0CF4,0);
+    glDeleteTextures(1,&sentinel); activeTexture(0x84C0); draw();
+    Check(colorCount(false) > 100, "PNG override did not reach the material sampler");
+    Check(!textured.dirty && textured.selected == selected && before == RZTexture::Load(*textured.package,*preview.Materials()[0].texture).DecodeLevel0(), "Preview-only override changed the package");
+    preview.UsePackageTexture(0); draw();
+    Check(colorCount(true) > 100, "Use package texture did not restore the original image");
+    preview.LoadPNG(0,png.u8string()); preview.ApplyPNG(textured,0);
+    Check(textured.dirty && textured.selected == selected, "Applying a model texture changed selection or failed to mark dirty");
+    const auto changed = RZTexture::Load(*textured.package,*preview.Materials()[0].texture).DecodeLevel0();
+    Check(changed != before && changed[0] > 240 && changed[1] < 10 && changed[2] > 240, "Applied texture did not retain the replacement pixels");
+    preview.Update(textured); draw();
+    Check(colorCount(false) > 100, "Package edit invalidated the model or reset the textured mode");
+    preview.Clear(); std::filesystem::remove_all(dir);
     bindFbo(0x8CA9, 0); bindFbo(0x8CA8, 0); deleteFbo(2, fbo);
     ImGui::DestroyContext(); glfwDestroyWindow(window); glfwTerminate();
-    std::puts("PASS: visible model, GL state isolation, retained buffers, cached frames, resize and shutdown cleanup");
+    std::puts("PASS: visible model, GL state isolation, retained buffers, cached frames, resize, textured rendering, PNG preview/reset/apply and shutdown cleanup");
     return 0;
 }
 
 int main(int argc, char**)
 {
-    try { if (argc > 1) return GLTests(); SelectionTests(); return 0; }
+    try { if (argc > 1) return GLTests(); SelectionTests(); MaterialTests(); ReferenceTests(); return 0; }
     catch (const std::exception& ex) { std::fprintf(stderr, "%s\n", ex.what()); return 1; }
 }

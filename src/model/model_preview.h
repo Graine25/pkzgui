@@ -1,16 +1,9 @@
 #pragma once
 #include "package/package_session.h"
+#include "model/model_geometry.h"
 #include <vector>
 #include <string>
 #include <cmath>
-
-struct ModelMesh
-{
-    std::vector<float> positions;   // xyz
-    std::vector<float> normals;     // xyz
-    std::vector<uint32_t> indices;
-    uint32_t material = 0;
-};
 
 struct ModelPreview
 {
@@ -20,7 +13,13 @@ struct ModelPreview
     ~ModelPreview();
 
     void Update(const PackageSession& session);
-    void Draw();
+    void Draw(PackageSession* session = nullptr);
+    void SetTextured(bool enabled) { textured = enabled; renderDirty = true; }
+    void LoadPNG(size_t material, const std::string& path);
+    void UsePackageTexture(size_t material);
+    void ApplyPNG(PackageSession& session, size_t material);
+    const std::vector<ModelMesh>& Meshes() const { return meshes; }
+    const std::vector<ModelMaterial>& Materials() const { return materials; }
     void Clear();
 
     bool active = false;
@@ -33,11 +32,26 @@ private:
     uint64_t revision = 0;
 
     std::vector<ModelMesh> meshes;
-    struct GPUMesh { unsigned int vao = 0, positions = 0, normals = 0, indices = 0; };
+    std::vector<ModelMaterial> materials;
+    struct MaterialTexture {
+        unsigned int texture = 0;
+        bool attempted = false;
+        size_t bytes = 0;
+        std::string png, error;
+    };
+    std::vector<MaterialTexture> materialTextures;
+    size_t textureBytes = 0;
+    bool textured = false, twoSided = true;
+    int materialIndex = 0;
+    float uvDivisor = 1024.f;
+    std::string textureStatus;
+    unsigned int MaterialTextureID(size_t index);
+    unsigned int UploadTexture(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height);
+    struct GPUMesh { unsigned int vao = 0, positions = 0, normals = 0, indices = 0, texcoords = 0; };
     std::vector<GPUMesh> gpuMeshes;
     bool renderDirty = true;
     unsigned int program = 0;
-    unsigned int fbo = 0, colorTex = 0, depthRbo = 0;
+    unsigned int fbo = 0, colorTex = 0, depthRbo = 0, whiteTexture = 0;
     int fboW = 0, fboH = 0;
 
     // Orbit camera

@@ -1,6 +1,11 @@
 #include "model/model_preview.h"
+#include "model/model_geometry.h"
 #include "package/resource_selection.h"
 #include "imgui.h"
+#include "texture/texture_actions.h"
+#include "platform/file_dialog.h"
+#include "platform/file_io.h"
+#include "BaseUtils/BUPng.h"
 #include <GLFW/glfw3.h>
 #include <algorithm>
 #include <cstring>
@@ -82,6 +87,9 @@ namespace gl3 {
     using PFN_glUseProgram = void (*)(GLuint);
     using PFN_glGetUniformLocation = GLint (*)(GLuint, const GLchar*);
     using PFN_glUniformMatrix4fv = void (*)(GLint, GLsizei, GLboolean, const float*);
+    using PFN_glUniform1i = void (*)(GLint, GLint);
+    using PFN_glUniform1f = void (*)(GLint, float);
+    using PFN_glActiveTexture = void (*)(GLenum);
     using PFN_glUniform3f = void (*)(GLint, float, float, float);
     using PFN_glGenBuffers = void (*)(GLsizei, GLuint*);
     using PFN_glBindBuffer = void (*)(GLenum, GLuint);
@@ -120,6 +128,9 @@ namespace gl3 {
     static PFN_glUseProgram UseProgram = nullptr;
     static PFN_glGetUniformLocation GetUniformLocation = nullptr;
     static PFN_glUniformMatrix4fv UniformMatrix4fv = nullptr;
+    static PFN_glUniform1i Uniform1i = nullptr;
+    static PFN_glUniform1f Uniform1f = nullptr;
+    static PFN_glActiveTexture ActiveTexture = nullptr;
     static PFN_glUniform3f Uniform3f = nullptr;
     static PFN_glGenBuffers GenBuffers = nullptr;
     static PFN_glBindBuffer BindBuffer = nullptr;
@@ -170,6 +181,9 @@ namespace gl3 {
         Load(GetUniformLocation, "glGetUniformLocation");
         Load(UniformMatrix4fv, "glUniformMatrix4fv");
         Load(Uniform3f, "glUniform3f");
+        Load(Uniform1i, "glUniform1i");
+        Load(Uniform1f, "glUniform1f");
+        Load(ActiveTexture, "glActiveTexture");
         Load(GenBuffers, "glGenBuffers");
         Load(BindBuffer, "glBindBuffer");
         Load(BufferData, "glBufferData");
@@ -207,7 +221,7 @@ namespace {
     struct ModelGLState
     {
         GLint drawFbo, readFbo, viewport[4], program, vao, buffer, texture, renderbuffer;
-        GLint depthFunc, cullMode, frontFace;
+        GLint depthFunc, cullMode, frontFace, activeTexture;
         GLfloat clearColor[4];
         GLdouble clearDepth;
         GLboolean depth, cull, scissor, blend, depthMask, colorMask[4];
@@ -219,6 +233,8 @@ namespace {
             glGetIntegerv(CurrentProgram, &program);
             glGetIntegerv(VertexArrayBinding, &vao);
             glGetIntegerv(ArrayBufferBinding, &buffer);
+            glGetIntegerv(0x84E0, &activeTexture);
+            gl3::ActiveTexture(0x84C0);
             glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
             glGetIntegerv(RenderbufferBinding, &renderbuffer);
             glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
@@ -240,6 +256,7 @@ namespace {
             gl3::BindVertexArray(vao);
             gl3::BindBuffer(GL_ARRAY_BUFFER, buffer);
             glBindTexture(GL_TEXTURE_2D, texture);
+            gl3::ActiveTexture(activeTexture);
             gl3::BindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
             glDepthFunc(depthFunc); glCullFace(cullMode); glFrontFace(frontFace);
             glClearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3]);
@@ -257,6 +274,9 @@ namespace {
 static const char* kVertexShader = R"(#version 150
 in vec3 aPos;
 in vec3 aNrm;
+in vec2 aUV;
+uniform float uUVDivisor;
+out vec2 vUV;
 uniform mat4 uMVP;
 uniform mat4 uModel;
 out vec3 vNrm;
@@ -264,6 +284,7 @@ out vec3 vWorld;
 void main() {
     vec4 world = uModel * vec4(aPos, 1.0);
     vWorld = world.xyz;
+    vUV = aUV / uUVDivisor;
     vNrm = mat3(uModel) * aNrm;
     gl_Position = uMVP * vec4(aPos, 1.0);
 }
@@ -272,6 +293,10 @@ void main() {
 static const char* kFragmentShader = R"(#version 150
 in vec3 vNrm;
 in vec3 vWorld;
+in vec2 vUV;
+uniform sampler2D uTexture;
+uniform bool uTextured;
+uniform bool uAlphaCutout;
 uniform vec3 uLightDir;
 uniform vec3 uViewPos;
 uniform vec3 uColor;
@@ -283,8 +308,11 @@ void main() {
     vec3 viewDir = normalize(uViewPos - vWorld);
     vec3 halfDir = normalize(l + viewDir);
     float spec = pow(max(dot(n, halfDir), 0.0), 32.0);
-    vec3 ambient = 0.25 * uColor;
-    vec3 diffuse = 0.65 * diff * uColor;
+    vec4 albedo = uTextured ? texture(uTexture, vUV) : vec4(1.0);
+    if (uTextured && uAlphaCutout && albedo.a < 0.3) discard;
+    vec3 base = uColor * albedo.rgb;
+    vec3 ambient = 0.35 * base;
+    vec3 diffuse = 0.65 * diff * base;
     vec3 specular = 0.25 * spec * vec3(1.0);
     fragColor = vec4(ambient + diffuse + specular, 1.0);
 }
@@ -293,6 +321,9 @@ void main() {
 static const char* kVertexShader = R"(#version 130
 in vec3 aPos;
 in vec3 aNrm;
+in vec2 aUV;
+uniform float uUVDivisor;
+out vec2 vUV;
 uniform mat4 uMVP;
 uniform mat4 uModel;
 out vec3 vNrm;
@@ -300,6 +331,7 @@ out vec3 vWorld;
 void main() {
     vec4 world = uModel * vec4(aPos, 1.0);
     vWorld = world.xyz;
+    vUV = aUV / uUVDivisor;
     vNrm = mat3(uModel) * aNrm;
     gl_Position = uMVP * vec4(aPos, 1.0);
 }
@@ -308,6 +340,10 @@ void main() {
 static const char* kFragmentShader = R"(#version 130
 in vec3 vNrm;
 in vec3 vWorld;
+in vec2 vUV;
+uniform sampler2D uTexture;
+uniform bool uTextured;
+uniform bool uAlphaCutout;
 uniform vec3 uLightDir;
 uniform vec3 uViewPos;
 uniform vec3 uColor;
@@ -319,8 +355,11 @@ void main() {
     vec3 viewDir = normalize(uViewPos - vWorld);
     vec3 halfDir = normalize(l + viewDir);
     float spec = pow(max(dot(n, halfDir), 0.0), 32.0);
-    vec3 ambient = 0.25 * uColor;
-    vec3 diffuse = 0.65 * diff * uColor;
+    vec4 albedo = uTextured ? texture(uTexture, vUV) : vec4(1.0);
+    if (uTextured && uAlphaCutout && albedo.a < 0.3) discard;
+    vec3 base = uColor * albedo.rgb;
+    vec3 ambient = 0.35 * base;
+    vec3 diffuse = 0.65 * diff * base;
     vec3 specular = 0.25 * spec * vec3(1.0);
     fragColor = vec4(ambient + diffuse + specular, 1.0);
 }
@@ -328,35 +367,6 @@ void main() {
 #endif
 
 namespace {
-
-    uint16_t ReadBE16(const uint8_t* p)
-    {
-        return static_cast<uint16_t>((p[0] << 8) | p[1]);
-    }
-
-    uint32_t ReadBE32(const uint8_t* p)
-    {
-        return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
-            (static_cast<uint32_t>(p[2]) << 8) | p[3];
-    }
-
-    float ReadBEf32(const uint8_t* p)
-    {
-        uint32_t u = ReadBE32(p);
-        float f;
-        std::memcpy(&f, &u, 4);
-        return f;
-    }
-
-    int s11(int v) { return v > 1023 ? v - 2048 : v; }
-    int s10(int v) { return v > 511 ? v - 1024 : v; }
-
-    void UnpackNormal(uint32_t u, float& x, float& y, float& z)
-    {
-        x = s11(static_cast<int>(u & 0x7FF)) / 1023.0f;
-        y = s11(static_cast<int>((u >> 11) & 0x7FF)) / 1023.0f;
-        z = s10(static_cast<int>((u >> 22) & 0x3FF)) / 511.0f;
-    }
 
     unsigned int CompileShader(unsigned int type, const char* src)
     {
@@ -431,560 +441,7 @@ namespace {
         std::memcpy(r, t, sizeof(t));
     }
 
-
-    struct Desc
-    {
-        uint32_t mat = 0, vboff = 0, stride = 0, fmt = 0, nv = 0, idxoff = 0, nidx = 0;
-    };
-
-    int Nuv(uint32_t fmt) { return (fmt >> 5) & 7; }
-
-    int CalcStride(uint32_t fmt)
-    {
-        int s = 12;
-        if (fmt & 0x0002) s += 4;
-        if (fmt & 0x0004) s += 4;
-        if (fmt & 0x0010) s += 4;
-        s += 4 * Nuv(fmt);
-        if (fmt & 0x1000) s += 8;
-        return s;
-    }
-
-    struct Offsets
-    {
-        int nrm = -1, tan = -1, col = -1, uv = -1, skin = -1;
-    };
-
-    Offsets AttrOffsets(uint32_t fmt)
-    {
-        Offsets o;
-        int p = 12;
-        if (fmt & 0x0002) { o.nrm = p; p += 4; }
-        if (fmt & 0x0004) { o.tan = p; p += 4; }
-        if (fmt & 0x0010) { o.col = p; p += 4; }
-        if (Nuv(fmt)) { o.uv = p; p += 4 * Nuv(fmt); }
-        if (fmt & 0x1000) o.skin = p;
-        return o;
-    }
-
-    std::vector<uint32_t> StripToTris(const uint16_t* idx, size_t n, uint32_t nv)
-    {
-        std::vector<uint32_t> tris;
-        std::vector<uint16_t> run;
-        auto flush = [&]() {
-            for (size_t i = 0; i + 2 < run.size(); ++i)
-            {
-                const uint16_t a = run[i], b = run[i + 1], c = run[i + 2];
-                if (a == b || b == c || a == c) continue;
-                if (a >= nv || b >= nv || c >= nv) continue;
-                if (i % 2 == 0) { tris.push_back(b); tris.push_back(a); tris.push_back(c); }
-                else { tris.push_back(a); tris.push_back(b); tris.push_back(c); }
-            }
-            run.clear();
-            };
-        for (size_t i = 0; i < n; ++i)
-        {
-            const uint16_t x = idx[i];
-            if (x == 0xFFFF || x == 0xAAAA || x >= nv)
-            {
-                flush();
-                continue;
-            }
-            run.push_back(x);
-        }
-        flush();
-        return tris;
-    }
-
-    std::vector<uint32_t> ListToTris(const uint16_t* idx, size_t n, uint32_t nv)
-    {
-        std::vector<uint32_t> tris;
-        for (size_t i = 0; i + 2 < n; i += 3)
-        {
-            const uint16_t a = idx[i], b = idx[i + 1], c = idx[i + 2];
-            if (a == 0xFFFF || b == 0xFFFF || c == 0xFFFF) continue;
-            if (a == 0xAAAA || b == 0xAAAA || c == 0xAAAA) continue;
-            if (a >= nv || b >= nv || c >= nv) continue;
-            if (a == b || b == c || a == c) continue;
-            tris.push_back(a);
-            tris.push_back(b);
-            tris.push_back(c);
-        }
-        return tris;
-    }
-
-    float TopologyScore(const std::vector<float>& pos, const std::vector<uint32_t>& tris)
-    {
-        if (tris.size() < 3 || pos.size() < 9) return 1e30f;
-        std::vector<float> edges;
-        edges.reserve(tris.size());
-        float maxLen = 0;
-        auto elen = [&](uint32_t ia, uint32_t ib) {
-            const float dx = pos[ia * 3] - pos[ib * 3];
-            const float dy = pos[ia * 3 + 1] - pos[ib * 3 + 1];
-            const float dz = pos[ia * 3 + 2] - pos[ib * 3 + 2];
-            return std::sqrt(dx * dx + dy * dy + dz * dz);
-            };
-        for (size_t i = 0; i + 2 < tris.size(); i += 3)
-        {
-            const float e0 = elen(tris[i], tris[i + 1]);
-            const float e1 = elen(tris[i + 1], tris[i + 2]);
-            const float e2 = elen(tris[i + 2], tris[i]);
-            edges.push_back(e0); edges.push_back(e1); edges.push_back(e2);
-            maxLen = std::max(maxLen, std::max(e0, std::max(e1, e2)));
-        }
-        if (edges.empty()) return 1e30f;
-        std::nth_element(edges.begin(), edges.begin() + static_cast<std::ptrdiff_t>(edges.size() / 2), edges.end());
-        const float median = edges[edges.size() / 2];
-        if (median < 1e-8f) return 1e30f;
-        const float outlier = maxLen / median;
-        const float density = static_cast<float>(tris.size() / 3);
-        return outlier * 10.f - std::log(density + 1.f);
-    }
-
-    std::vector<uint32_t> FilterLongEdges(const std::vector<float>& pos, const std::vector<uint32_t>& tris,
-        float maxFactor = 10.f)
-    {
-        if (tris.size() < 3) return tris;
-        auto elen = [&](uint32_t ia, uint32_t ib) {
-            const float dx = pos[ia * 3] - pos[ib * 3];
-            const float dy = pos[ia * 3 + 1] - pos[ib * 3 + 1];
-            const float dz = pos[ia * 3 + 2] - pos[ib * 3 + 2];
-            return std::sqrt(dx * dx + dy * dy + dz * dz);
-            };
-        std::vector<float> edges;
-        edges.reserve(tris.size());
-        for (size_t i = 0; i + 2 < tris.size(); i += 3)
-        {
-            edges.push_back(elen(tris[i], tris[i + 1]));
-            edges.push_back(elen(tris[i + 1], tris[i + 2]));
-            edges.push_back(elen(tris[i + 2], tris[i]));
-        }
-        if (edges.empty()) return tris;
-        std::nth_element(edges.begin(), edges.begin() + static_cast<std::ptrdiff_t>(edges.size() / 2), edges.end());
-        const float median = edges[edges.size() / 2];
-        const float limit = std::max(median * maxFactor, median + 1e-4f);
-        std::vector<uint32_t> out;
-        out.reserve(tris.size());
-        for (size_t i = 0; i + 2 < tris.size(); i += 3)
-        {
-            const float e0 = elen(tris[i], tris[i + 1]);
-            const float e1 = elen(tris[i + 1], tris[i + 2]);
-            const float e2 = elen(tris[i + 2], tris[i]);
-            if (e0 > limit || e1 > limit || e2 > limit) continue;
-            out.push_back(tris[i]);
-            out.push_back(tris[i + 1]);
-            out.push_back(tris[i + 2]);
-        }
-        return out;
-    }
-
-    bool ParseDescriptor(const uint8_t* data, size_t size, Desc& d)
-    {
-        if (size < 48) return false;
-        d.mat = ReadBE32(data + 0);
-        d.vboff = ReadBE32(data + 4);
-        d.stride = ReadBE32(data + 8);
-        d.fmt = ReadBE32(data + 12);
-        d.nv = ReadBE32(data + 16);
-        d.idxoff = ReadBE32(data + 20);
-        d.nidx = ReadBE32(data + 24);
-        if (d.nv == 0 || d.nidx == 0 || d.stride == 0) return false;
-        (void)CalcStride;
-        return true;
-    }
-
-    bool FinitePos(float x, float y, float z)
-    {
-        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return false;
-        constexpr float lim = 1.0e5f;
-        return std::fabs(x) < lim && std::fabs(y) < lim && std::fabs(z) < lim;
-    }
-
-    void DecodeMesh(const uint8_t* vb, size_t vbSize, const uint8_t* ib, size_t ibSize,
-        const Desc& d, ModelMesh& out)
-    {
-        out.material = d.mat;
-        out.positions.clear();
-        out.normals.clear();
-        out.indices.clear();
-
-        const uint32_t stride = d.stride;
-        if (stride < static_cast<uint32_t>(CalcStride(d.fmt)) || d.nv < 3 || d.nidx < 3) return;
-        if (d.nv > 1000000 || d.nidx > 6000000)
-            throw std::runtime_error("Mesh exceeds the preview limit (1M vertices / 6M indices).");
-        if (d.vboff + static_cast<size_t>(d.nv) * stride > vbSize) return;
-        if (static_cast<size_t>(d.idxoff) * 2 + static_cast<size_t>(d.nidx) * 2 > ibSize) return;
-
-        const Offsets o = AttrOffsets(d.fmt);
-        out.positions.reserve(static_cast<size_t>(d.nv) * 3);
-        out.normals.reserve(static_cast<size_t>(d.nv) * 3);
-
-        int bad = 0;
-        for (uint32_t v = 0; v < d.nv; ++v)
-        {
-            const uint8_t* p = vb + d.vboff + static_cast<size_t>(v) * stride;
-            const float x = ReadBEf32(p + 0);
-            const float y = ReadBEf32(p + 4);
-            const float z = ReadBEf32(p + 8);
-            if (!FinitePos(x, y, z)) ++bad;
-            out.positions.push_back(x);
-            out.positions.push_back(y);
-            out.positions.push_back(z);
-            if (o.nrm >= 0)
-            {
-                float nx, ny, nz;
-                UnpackNormal(ReadBE32(p + o.nrm), nx, ny, nz);
-                out.normals.push_back(nx);
-                out.normals.push_back(ny);
-                out.normals.push_back(nz);
-            }
-            else
-            {
-                out.normals.push_back(0.f);
-                out.normals.push_back(1.f);
-                out.normals.push_back(0.f);
-            }
-        }
-        if (bad != 0)
-        {
-            out.positions.clear();
-            out.normals.clear();
-            return;
-        }
-
-        uint32_t nidx = d.nidx;
-        while (nidx > 0)
-        {
-            const uint16_t last = ReadBE16(ib + (static_cast<size_t>(d.idxoff) + nidx - 1) * 2);
-            if (last != 0xAAAA) break;
-            --nidx;
-        }
-        if (nidx < 3) return;
-
-        std::vector<uint16_t> raw(nidx);
-        for (uint32_t i = 0; i < nidx; ++i)
-            raw[i] = ReadBE16(ib + (static_cast<size_t>(d.idxoff) + i) * 2);
-
-        auto strip = StripToTris(raw.data(), raw.size(), d.nv);
-        auto list = ListToTris(raw.data(), raw.size(), d.nv);
-        const float stripScore = TopologyScore(out.positions, strip);
-        const float listScore = TopologyScore(out.positions, list);
-        out.indices = (listScore + 0.5f < stripScore) ? std::move(list) : std::move(strip);
-        out.indices = FilterLongEdges(out.positions, out.indices, 10.f);
-    }
-
-    std::string Lower(std::string s)
-    {
-        for (char& c : s) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + 32);
-        return s;
-    }
-
-    std::string NameFromHeader(const CMChunk& chunk)
-    {
-        if (chunk.GetMaskedID() != GenSub_ResourceHeader) return {};
-        return CMChunkResourceHeader(chunk).GetName();
-    }
-
-    const CMChunk* FindChildId(const CMChunk& parent, uint32_t id)
-    {
-        for (const CMChunk& c : parent.children)
-            if (c.GetMaskedID() == id)
-                return &c;
-        return nullptr;
-    }
-
-    struct ModelAsset
-    {
-        std::string name;
-        const CMChunk* lod = nullptr;
-        const uint8_t* vb = nullptr;
-        size_t vbSize = 0;
-        const uint8_t* ib = nullptr;
-        size_t ibSize = 0;
-    };
-
-    void CollectModelAssets(const CMChunk& chunk, std::vector<ModelAsset>& out)
-    {
-        if (chunk.GetMaskedID() == 0x26 || chunk.GetMaskedID() == 0x0026)
-        {
-            std::string nm;
-            const CMChunk* lod = nullptr;
-            for (const CMChunk& c : chunk.children)
-            {
-                if (c.GetMaskedID() == 0x138E && nm.empty())
-                    nm = NameFromHeader(c);
-                if ((c.GetMaskedID() == 0x0325 || c.GetMaskedID() == 0x325) && !lod)
-                    lod = &c;
-            }
-            if (lod)
-            {
-                const CMChunk* vb = nullptr;
-                const CMChunk* ib = nullptr;
-                for (const CMChunk& c : lod->children)
-                {
-                    if (c.GetMaskedID() == 0x1388) vb = &c;
-                    if (c.GetMaskedID() == 0x1389) ib = &c;
-                }
-                if (vb && ib && !vb->data.empty() && !ib->data.empty())
-                {
-                    ModelAsset a;
-                    a.name = nm;
-                    a.lod = lod;
-                    a.vb = vb->data.data();
-                    a.vbSize = vb->data.size();
-                    a.ib = ib->data.data();
-                    a.ibSize = ib->data.size();
-                    out.push_back(std::move(a));
-                }
-            }
-        }
-        for (const CMChunk& c : chunk.children)
-            CollectModelAssets(c, out);
-    }
-
-    void CollectLodBuffers(const CMChunk& chunk, std::vector<ModelAsset>& out, const std::string& nearbyName)
-    {
-        std::string nm = nearbyName;
-        if (const auto* header = chunk.FindChild(GenSub_ResourceHeader))
-            nm = NameFromHeader(*header);
-        if (chunk.GetMaskedID() == 0x138E)
-        {
-            std::string h = NameFromHeader(chunk);
-            if (!h.empty()) nm = h;
-        }
-
-        if (chunk.GetMaskedID() == 0x0325 || chunk.GetMaskedID() == 0x325)
-        {
-            const CMChunk* vb = nullptr;
-            const CMChunk* ib = nullptr;
-            for (const CMChunk& c : chunk.children)
-            {
-                if (c.GetMaskedID() == 0x1388) vb = &c;
-                if (c.GetMaskedID() == 0x1389) ib = &c;
-            }
-            if (vb && ib && !vb->data.empty() && !ib->data.empty())
-            {
-                ModelAsset a;
-                a.name = nm;
-                a.lod = &chunk;
-                a.vb = vb->data.data();
-                a.vbSize = vb->data.size();
-                a.ib = ib->data.data();
-                a.ibSize = ib->data.size();
-                bool dup = false;
-                for (const auto& e : out)
-                    if (e.vb == a.vb && e.ib == a.ib) { dup = true; break; }
-                if (!dup) out.push_back(std::move(a));
-            }
-        }
-
-        for (const CMChunk& c : chunk.children)
-            CollectLodBuffers(c, out, nm);
-    }
-
-    struct DescGroup
-    {
-        std::string name;
-        const CMChunk* lod = nullptr;
-        std::vector<Desc> descs;
-    };
-
-    void CollectDescriptors(const CMChunk& chunk, std::vector<DescGroup>& groups, const std::string& nearbyName)
-    {
-        std::string nm = nearbyName;
-        if (const auto* header = chunk.FindChild(GenSub_ResourceHeader))
-            nm = NameFromHeader(*header);
-        if (chunk.GetMaskedID() == 0x138E)
-        {
-            std::string h = NameFromHeader(chunk);
-            if (!h.empty()) nm = h;
-        }
-
-        if (chunk.GetMaskedID() == 0x0325 || chunk.GetMaskedID() == 0x325)
-        {
-            std::vector<Desc> local;
-            for (const CMChunk& c : chunk.children)
-            {
-                if (c.GetMaskedID() == 0x0327)
-                {
-                    Desc d;
-                    if (ParseDescriptor(c.data.data(), c.data.size(), d))
-                        local.push_back(d);
-                }
-            }
-            if (!local.empty())
-            {
-                DescGroup g;
-                g.name = nm;
-                g.lod = &chunk;
-                g.descs = std::move(local);
-                groups.push_back(std::move(g));
-            }
-            return;
-        }
-
-        if (chunk.GetMaskedID() == 0x0327)
-        {
-            Desc d;
-            if (ParseDescriptor(chunk.data.data(), chunk.data.size(), d))
-            {
-                DescGroup g;
-                g.name = nm;
-                g.descs.push_back(d);
-                groups.push_back(std::move(g));
-            }
-        }
-
-        for (const CMChunk& c : chunk.children)
-            CollectDescriptors(c, groups, nm);
-    }
-
-    int ScoreDescGroup(const ModelAsset& asset, const std::vector<Desc>& descs)
-    {
-        int score = 0;
-        int ok = 0;
-        for (const Desc& d : descs)
-        {
-            const uint32_t stride = d.stride;
-            if (stride < static_cast<uint32_t>(CalcStride(d.fmt)) || d.nv < 3 || d.nidx < 3) continue;
-            if (d.nv > 1000000 || d.nidx > 6000000) continue;
-            if (d.vboff + static_cast<size_t>(d.nv) * stride > asset.vbSize) continue;
-            if (static_cast<size_t>(d.idxoff) * 2 + static_cast<size_t>(d.nidx) * 2 > asset.ibSize) continue;
-            int sampleBad = 0;
-            const uint32_t samples = std::min(d.nv, 8u);
-            for (uint32_t v = 0; v < samples; ++v)
-            {
-                const uint8_t* p = asset.vb + d.vboff + static_cast<size_t>(v) * stride;
-                if (!FinitePos(ReadBEf32(p), ReadBEf32(p + 4), ReadBEf32(p + 8)))
-                    ++sampleBad;
-            }
-            if (sampleBad * 2 >= static_cast<int>(samples)) continue;
-            score += static_cast<int>(d.nv);
-            ++ok;
-        }
-        return ok ? score : -1;
-    }
-
-    bool BuildMeshes(const ModelAsset& asset, const std::vector<Desc>& descs,
-        std::vector<ModelMesh>& meshes)
-    {
-        bool any = false;
-        for (const Desc& d : descs)
-        {
-            ModelMesh m;
-            DecodeMesh(asset.vb, asset.vbSize, asset.ib, asset.ibSize, d, m);
-            if (!m.indices.empty() && !m.positions.empty())
-            {
-                size_t bytes = (m.positions.size() + m.normals.size()) * sizeof(float) + m.indices.size() * sizeof(uint32_t);
-                for (const auto& mesh : meshes)
-                    bytes += (mesh.positions.size() + mesh.normals.size()) * sizeof(float) + mesh.indices.size() * sizeof(uint32_t);
-                if (bytes > 128 * 1024 * 1024)
-                    throw std::runtime_error("Model exceeds the 128 MiB preview budget.");
-                meshes.push_back(std::move(m));
-                any = true;
-            }
-        }
-        return any;
-    }
-
-    struct ScanStats
-    {
-        int assets = 0, descGroups = 0, descs = 0, vb = 0, ib = 0, meshChunks = 0;
-    };
-
-    void CountGeo(const CMChunk& chunk, ScanStats& s)
-    {
-        const uint32_t id = chunk.GetMaskedID();
-        if (id == 0x26 || id == 0x0026) ++s.assets;
-        if (id == 0x1388) ++s.vb;
-        if (id == 0x1389) ++s.ib;
-        if (id == 0x0327) ++s.meshChunks;
-        for (const CMChunk& c : chunk.children)
-            CountGeo(c, s);
-    }
-
-    bool SearchPackageModels(const PKPackage& package, const std::string& wantName,
-        std::vector<ModelMesh>& meshes, std::string& outName,
-        std::string& diag)
-    {
-        std::vector<ModelAsset> assets;
-        std::vector<DescGroup> groups;
-        ScanStats stats;
-
-        for (const CMChunk& root : package.rootChunks)
-        {
-            CollectModelAssets(root, assets);
-            CollectLodBuffers(root, assets, "");
-            CollectDescriptors(root, groups, "");
-            CountGeo(root, stats);
-        }
-        stats.assets = static_cast<int>(assets.size());
-        stats.descGroups = static_cast<int>(groups.size());
-        for (const auto& g : groups) stats.descs += static_cast<int>(g.descs.size());
-
-        diag = "scan: assets=" + std::to_string(stats.assets) +
-            " vb=" + std::to_string(stats.vb) +
-            " ib=" + std::to_string(stats.ib) +
-            " geomMesh=" + std::to_string(stats.meshChunks) +
-            " descGroups=" + std::to_string(stats.descGroups) +
-            " descs=" + std::to_string(stats.descs);
-
-        if (assets.empty())
-            return false;
-
-        const std::string want = Lower(wantName);
-
-        auto tryAsset = [&](const ModelAsset& asset) -> bool {
-            const std::string assetKey = Lower(asset.name);
-            int bestScore = -1;
-            const DescGroup* best = nullptr;
-
-            for (const auto& g : groups)
-            {
-                const std::string gKey = Lower(g.name);
-                if (g.lod != asset.lod && (assetKey.empty() || assetKey != gKey))
-                    continue;
-                if (!want.empty())
-                {
-                    if (assetKey != want && gKey != want && !assetKey.empty() && !gKey.empty())
-                        continue;
-                }
-                const int s = ScoreDescGroup(asset, g.descs);
-                if (s > bestScore)
-                {
-                    bestScore = s;
-                    best = &g;
-                }
-            }
-
-            if (!best || bestScore < 0) return false;
-            if (!BuildMeshes(asset, best->descs, meshes)) return false;
-            outName = !asset.name.empty() ? asset.name : best->name;
-            if (outName.empty()) outName = "(unnamed)";
-            return true;
-            };
-
-        if (!want.empty())
-        {
-            for (const auto& a : assets)
-                if (!a.name.empty() && Lower(a.name) == want && tryAsset(a))
-                    return true;
-        }
-
-        if (!want.empty()) return false;
-        for (const auto& a : assets)
-            if (!a.name.empty() && tryAsset(a))
-                return true;
-        for (const auto& a : assets)
-            if (a.name.empty() && tryAsset(a))
-                return true;
-
-        return false;
-    }
-
 }
-
 
 ModelPreview::~ModelPreview() { Clear(); }
 
@@ -997,10 +454,14 @@ void ModelPreview::DestroyGL()
     }
     for (const auto& mesh : gpuMeshes) {
         gl3::DeleteVertexArrays(1, &mesh.vao);
-        const unsigned int buffers[] = {mesh.positions, mesh.normals, mesh.indices};
-        gl3::DeleteBuffers(3, buffers);
+        const unsigned int buffers[] = {mesh.positions, mesh.normals, mesh.indices, mesh.texcoords};
+        gl3::DeleteBuffers(4, buffers);
     }
     gpuMeshes.clear();
+    for (auto& texture : materialTextures) { if (texture.texture) glDeleteTextures(1, &texture.texture); texture.texture = 0; }
+    textureBytes = 0;
+    if (whiteTexture) glDeleteTextures(1, &whiteTexture);
+    whiteTexture = 0;
     if (colorTex) glDeleteTextures(1, &colorTex);
     if (depthRbo) gl3::DeleteRenderbuffers(1, &depthRbo);
     if (fbo) gl3::DeleteFramebuffers(1, &fbo);
@@ -1014,6 +475,10 @@ void ModelPreview::Clear()
     DestroyGL();
     renderDirty = true;
     meshes.clear();
+    materials.clear();
+    materialTextures.clear();
+    materialIndex = 0;
+    textureStatus.clear();
     active = false;
     name.clear();
     error.clear();
@@ -1036,6 +501,7 @@ void ModelPreview::EnsureProgram()
     gl3::AttachShader(program, fs);
     gl3::BindAttribLocation(program, 0, "aPos");
     gl3::BindAttribLocation(program, 1, "aNrm");
+    gl3::BindAttribLocation(program, 2, "aUV");
     gl3::LinkProgram(program);
     gl3::DeleteShader(vs);
     gl3::DeleteShader(fs);
@@ -1057,6 +523,8 @@ void ModelPreview::EnsureFBO(int w, int h)
     if (w < 1) w = 1;
     if (h < 1) h = 1;
     if (fbo && fboW == w && fboH == h) return;
+    if (whiteTexture) glDeleteTextures(1, &whiteTexture);
+    whiteTexture = 0;
     if (colorTex) glDeleteTextures(1, &colorTex);
     if (depthRbo) gl3::DeleteRenderbuffers(1, &depthRbo);
     if (fbo) gl3::DeleteFramebuffers(1, &fbo);
@@ -1130,24 +598,11 @@ bool ModelPreview::DecodeGeometry(const PackageSession& session)
         }
     }
 
-    std::string diag;
-    const bool ok = SearchPackageModels(*session.package, want, meshes, name, diag);
-    if (!ok || meshes.empty())
-    {
-        active = true;
-        error = "No drawable mesh found. " + diag;
-        if (resource)
-            error += " resource=\"" + resource->GetName() + "\" type=" +
-            std::to_string(resource->GetResourceType());
-        else if (session.selected)
-        {
-            char b[16];
-            std::snprintf(b, sizeof(b), "%X", session.selected->GetMaskedID());
-            error += " chunk=0x";
-            error += b;
-        }
-        return false;
-    }
+    if (resource) materials = LoadModelMaterials(*session.package, *resource);
+    materialTextures.resize(materials.size());
+    if (!resource) return false;
+    meshes = LoadModelGeometry(*session.package, *resource, materials);
+    if (meshes.empty()) throw std::runtime_error("No drawable mesh in this geometry resource.");
 
     meshCount = meshes.size();
     vertexCount = 0;
@@ -1165,6 +620,9 @@ void ModelPreview::Update(const PackageSession& session)
 {
     if (selected == session.selected && package == session.package.get() && revision == session.revision)
         return;
+    const bool sameModel = selected == session.selected && package == session.package.get();
+    const float oldYaw = yaw, oldPitch = pitch, oldDistance = distance;
+    const int oldMaterial = materialIndex;
     Clear();
     selected = session.selected;
     package = session.package.get();
@@ -1179,8 +637,10 @@ void ModelPreview::Update(const PackageSession& session)
         if (name.empty()) throw std::runtime_error("Geometry resource has no name; cannot match its buffers.");
         if (package->isLittleEndian)
             throw std::runtime_error("Model preview currently supports big-endian geometry only.");
-        if (DecodeGeometry(session))
+        if (DecodeGeometry(session)) {
             active = true;
+            if (sameModel) { yaw = oldYaw; pitch = oldPitch; distance = oldDistance; materialIndex = std::clamp(oldMaterial, 0, std::max(0, int(materials.size()) - 1)); }
+        }
     }
     catch (const std::exception& ex)
     {
@@ -1201,6 +661,7 @@ void ModelPreview::UploadMeshes()
         gl3::GenBuffers(1, &gpu.positions);
         gl3::GenBuffers(1, &gpu.normals);
         gl3::GenBuffers(1, &gpu.indices);
+        gl3::GenBuffers(1, &gpu.texcoords);
 
         gl3::BindBuffer(GL_ARRAY_BUFFER, gpu.positions);
         gl3::BufferData(GL_ARRAY_BUFFER,
@@ -1216,6 +677,10 @@ void ModelPreview::UploadMeshes()
         gl3::EnableVertexAttribArray(1);
         gl3::VertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
 
+        gl3::BindBuffer(GL_ARRAY_BUFFER, gpu.texcoords);
+        gl3::BufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(mesh.texcoords.size() * sizeof(float)), mesh.texcoords.data(), GL_STATIC_DRAW);
+        gl3::EnableVertexAttribArray(2);
+        gl3::VertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
         gl3::BindBuffer(GL_ELEMENT_ARRAY_BUFFER, gpu.indices);
         gl3::BufferData(GL_ELEMENT_ARRAY_BUFFER,
             static_cast<GLsizeiptr>(mesh.indices.size() * sizeof(uint32_t)),
@@ -1231,6 +696,7 @@ void ModelPreview::RenderScene(int w, int h)
     EnsureProgram();
     EnsureFBO(w, h);
     if (gpuMeshes.empty()) UploadMeshes();
+    if (!whiteTexture) whiteTexture = UploadTexture(std::vector<uint8_t>(4, 255), 1, 1);
 
     gl3::BindFramebuffer(GL_FRAMEBUFFER, fbo);
     glViewport(0, 0, w, h);
@@ -1243,7 +709,7 @@ void ModelPreview::RenderScene(int w, int h)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
-    glEnable(GL_CULL_FACE);
+    if (twoSided) glDisable(GL_CULL_FACE); else glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
     glFrontFace(GL_CCW);
 
@@ -1268,6 +734,7 @@ void ModelPreview::RenderScene(int w, int h)
     gl3::UniformMatrix4fv(locModel, 1, GL_FALSE, model);
     gl3::Uniform3f(locLight, 0.4f, -0.8f, 0.3f);
     gl3::Uniform3f(locView, eyeX, eyeY, eyeZ);
+    gl3::Uniform1i(gl3::GetUniformLocation(program, "uTexture"), 0);
 
     static const float kColors[][3] = {
         {0.75f, 0.78f, 0.82f}, {0.85f, 0.55f, 0.45f}, {0.45f, 0.70f, 0.55f},
@@ -1278,7 +745,12 @@ void ModelPreview::RenderScene(int w, int h)
     {
         const ModelMesh& mesh = meshes[mi];
         if (mesh.indices.empty()) continue;
-        const float* col = kColors[mi % 6];
+        gl3::Uniform1f(gl3::GetUniformLocation(program, "uUVDivisor"), mesh.integerUV ? uvDivisor : 1.f);
+        const unsigned int texture = textured && mesh.hasUV ? MaterialTextureID(mesh.material) : 0;
+        glBindTexture(GL_TEXTURE_2D, texture ? texture : whiteTexture);
+        gl3::Uniform1i(gl3::GetUniformLocation(program, "uTextured"), texture != 0);
+        gl3::Uniform1i(gl3::GetUniformLocation(program, "uAlphaCutout"), mesh.material < materials.size() && materials[mesh.material].alphaCutout);
+        const float* col = texture && mesh.material < materials.size() ? materials[mesh.material].color : kColors[mesh.material % 6];
         gl3::Uniform3f(locColor, col[0], col[1], col[2]);
 
         gl3::BindVertexArray(gpuMeshes[mi].vao);
@@ -1287,7 +759,7 @@ void ModelPreview::RenderScene(int w, int h)
 
 }
 
-void ModelPreview::Draw()
+void ModelPreview::Draw(PackageSession* session)
 {
     ImGui::TextWrapped("%s", name.c_str());
     if (!error.empty())
@@ -1297,7 +769,49 @@ void ModelPreview::Draw()
     }
     ImGui::TextDisabled("%zu mesh%s, %zu verts, %zu tris",
         meshCount, meshCount == 1 ? "" : "es", vertexCount, triangleCount);
-    ImGui::TextDisabled("Drag to orbit, scroll to zoom");
+    if (ImGui::Checkbox("Package textures", &textured)) renderDirty = true;
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Two-sided", &twoSided)) renderDirty = true;
+    ImGui::SameLine();
+    if (ImGui::Button("Frame model")) { ComputeBounds(); renderDirty = true; }
+    if (!materials.empty() && ImGui::CollapsingHeader("Materials / replace textures")) {
+        if (ImGui::BeginCombo("Material", materials[materialIndex].name.c_str())) {
+            for (size_t i = 0; i < materials.size(); ++i)
+                if (ImGui::Selectable(materials[i].name.c_str(), materialIndex == int(i))) materialIndex = int(i);
+            ImGui::EndCombo();
+        }
+        auto& mat = materials[materialIndex];
+        const auto& texture = materialTextures[materialIndex];
+        if (mat.texture) ImGui::TextWrapped("Package texture: %s", mat.texture->GetName().c_str());
+        else if (mat.textureCRC) ImGui::TextWrapped("Texture CRC 0x%08X is in another package. A PNG can be previewed here.", mat.textureCRC);
+        else ImGui::TextWrapped("This material has no base-color texture.");
+        if (ImGui::Checkbox("Cutout alpha", &mat.alphaCutout)) renderDirty = true;
+        if (!texture.png.empty()) ImGui::TextWrapped("Preview: %s", texture.png.c_str());
+        try {
+            if (session && mat.texture && ImGui::Button("Extract package PNG...")) {
+                const auto path = PickFile(glfwGetCurrentContext(), "PNG image", "png", true, SanitizeFileName(mat.texture->GetName()) + ".png");
+                if (!path.empty()) { ExtractTexture(*session, *mat.texture, path); textureStatus = "Package texture extracted."; }
+            }
+            if (ImGui::Button("Preview PNG...")) {
+                const auto path = PickFile(glfwGetCurrentContext(), "PNG image", "png", false);
+                if (!path.empty()) LoadPNG(materialIndex, path);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Use package texture")) UsePackageTexture(materialIndex);
+            if (session && mat.texture && !texture.png.empty()) {
+                if (ImGui::Button("Apply PNG to package")) ApplyPNG(*session, materialIndex);
+                ImGui::TextWrapped("Applies to every use of this texture. Save As writes the edited package.");
+            }
+        } catch (const std::exception& ex) { textureStatus = ex.what(); }
+        if (!texture.error.empty()) ImGui::TextWrapped("%s", texture.error.c_str());
+        if (!textureStatus.empty()) ImGui::TextWrapped("%s", textureStatus.c_str());
+        if (ImGui::TreeNode("UV settings")) {
+            if (ImGui::DragFloat("Integer UV divisor", &uvDivisor, 1, 1, 65536, "%.0f", ImGuiSliderFlags_AlwaysClamp)) renderDirty = true;
+            ImGui::TextWrapped("1024 is confirmed in the OfficeSuit vertex shader. Animated UV transforms are not emulated.");
+            ImGui::TreePop();
+        }
+    }
+    ImGui::TextDisabled("Drag to orbit, scroll to zoom (static mesh preview)");
 
     const ImVec2 available = ImGui::GetContentRegionAvail();
     if (available.x < 32 || available.y < 32) return;
@@ -1346,4 +860,98 @@ void ModelPreview::Draw()
         static_cast<ImTextureID>(colorTex),
         origin, ImVec2(origin.x + available.x, origin.y + available.y),
         ImVec2(0, 1), ImVec2(1, 0));
+}
+unsigned int ModelPreview::UploadTexture(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height)
+{
+    const size_t bytes = size_t(width) * height * 4;
+    if (!width || !height || width > 4096 || height > 4096 || rgba.size() != bytes)
+        throw std::runtime_error("Model textures must be between 1 and 4096 pixels per side.");
+    if (bytes > 128 * 1024 * 1024 - textureBytes) throw std::runtime_error("Model textures exceed the 128 MiB preview budget.");
+    gl3::EnsureLoaded();
+    const ModelGLState state;
+    GLint alignment, rowLength, skipRows, skipPixels, unpackBuffer;
+    glGetIntegerv(GL_UNPACK_ALIGNMENT, &alignment);
+    glGetIntegerv(0x0CF2, &rowLength); glGetIntegerv(0x0CF3, &skipRows); glGetIntegerv(0x0CF4, &skipPixels);
+    glGetIntegerv(0x88EF, &unpackBuffer);
+    gl3::BindBuffer(0x88EC, 0);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glPixelStorei(0x0CF2, 0); glPixelStorei(0x0CF3, 0); glPixelStorei(0x0CF4, 0);
+    unsigned int texture = 0;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    GLint uploadedWidth = 0;
+    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &uploadedWidth);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, alignment);
+    glPixelStorei(0x0CF2, rowLength); glPixelStorei(0x0CF3, skipRows); glPixelStorei(0x0CF4, skipPixels);
+    gl3::BindBuffer(0x88EC, unpackBuffer);
+    if (uploadedWidth != static_cast<GLint>(width)) {
+        if (texture) glDeleteTextures(1, &texture);
+        throw std::runtime_error("Could not allocate model texture on the GPU.");
+    }
+    textureBytes += bytes;
+    return texture;
+}
+
+unsigned int ModelPreview::MaterialTextureID(size_t index)
+{
+    if (index >= materials.size()) return 0;
+    auto& cached = materialTextures[index];
+    if (cached.attempted) return cached.texture;
+    cached.attempted = true;
+    if (!materials[index].texture || !package) return 0;
+    try {
+        const auto texture = RZTexture::Load(*package, *materials[index].texture);
+        if (!texture.desc.Is2D() || texture.desc.width > 4096 || texture.desc.height > 4096)
+            throw std::runtime_error("Unsupported or oversized material texture.");
+        cached.texture = UploadTexture(texture.DecodeLevel0(), texture.desc.width, texture.desc.height);
+        cached.bytes = size_t(texture.desc.width) * texture.desc.height * 4;
+        glBindTexture(GL_TEXTURE_2D, cached.texture);
+        const GLint address = materials[index].addressMode == 1 ? GL_CLAMP_TO_EDGE : GL_REPEAT;
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, address);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, address);
+    } catch (const std::exception& ex) { cached.error = ex.what(); }
+    return cached.texture;
+}
+
+void ModelPreview::LoadPNG(size_t index, const std::string& path)
+{
+    if (index >= materials.size()) throw std::runtime_error("Select a material first.");
+    const auto image = BUPng::Decode(ReadFile(std::filesystem::u8path(path)));
+    auto& cached = materialTextures[index];
+    const auto texture = UploadTexture(image.rgba, image.width, image.height);
+    if (cached.texture) glDeleteTextures(1, &cached.texture);
+    textureBytes -= cached.bytes;
+    cached = {texture, true, size_t(image.width) * image.height * 4, path, {}};
+    textureStatus = "PNG preview only. The package has not been changed.";
+    textured = true;
+    renderDirty = true;
+}
+
+void ModelPreview::UsePackageTexture(size_t index)
+{
+    if (index >= materialTextures.size()) return;
+    auto& cached = materialTextures[index];
+    if (cached.texture) glDeleteTextures(1, &cached.texture);
+    textureBytes -= cached.bytes;
+    cached = {};
+    textureStatus.clear();
+    textured = true;
+    renderDirty = true;
+}
+
+void ModelPreview::ApplyPNG(PackageSession& session, size_t index)
+{
+    if (session.package.get() != package || session.revision != revision || index >= materials.size() || !materials[index].texture)
+        throw std::runtime_error("Select a material with a texture in this package first.");
+    const auto& cached = materialTextures[index];
+    if (cached.png.empty()) throw std::runtime_error("Preview a replacement PNG first.");
+    const auto texture = RZTexture::Load(*package, *materials[index].texture);
+    ReplaceTexture(session, *materials[index].texture, cached.png, texture.desc.width, texture.desc.height);
+    textureStatus = session.status;
+    renderDirty = true;
 }

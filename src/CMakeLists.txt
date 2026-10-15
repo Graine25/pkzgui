@@ -37,6 +37,7 @@ endif()
 add_executable(pkzgui
     main.cpp
     model/model_preview.cpp
+    model/model_controls.cpp
     model/model_material.cpp
     model/model_geometry.cpp
     model/model_shader_export.cpp
@@ -90,6 +91,7 @@ if(PKZGUI_BUILD_TESTS)
     add_executable(model_preview_test
         ../tests/model_preview_test.cpp
         model/model_preview.cpp
+        model/model_controls.cpp
         model/model_material.cpp
         model/model_geometry.cpp
         model/model_shader_export.cpp

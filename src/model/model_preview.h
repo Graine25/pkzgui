@@ -14,6 +14,8 @@ struct ModelPreview
 
     void Update(const PackageSession& session);
     void Draw(PackageSession* session = nullptr);
+    void DrawActions(PackageSession& session);
+    std::vector<std::string> TakeLogMessages();
     void SetTextured(bool enabled) { textured = enabled; renderDirty = true; }
     void LoadPNG(size_t material, const std::string& path);
     void UsePackageTexture(size_t material);
@@ -44,7 +46,10 @@ private:
     bool textured = false, twoSided = true;
     int materialIndex = 0;
     float uvDivisor = 1024.f;
-    std::string textureStatus;
+    std::vector<std::string> logMessages;
+    bool DrawHUD(float x, float y, float width, float height);
+    void SelectMaterial(const char* id);
+    void Log(const std::string& message);
     unsigned int MaterialTextureID(size_t index);
     unsigned int UploadTexture(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height);
     struct GPUMesh { unsigned int vao = 0, positions = 0, normals = 0, indices = 0, texcoords = 0; };

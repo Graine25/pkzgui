@@ -3,7 +3,6 @@
 #include "package/resource_selection.h"
 #include "imgui.h"
 #include "texture/texture_actions.h"
-#include "platform/file_dialog.h"
 #include "platform/file_io.h"
 #include "BaseUtils/BUPng.h"
 #include <GLFW/glfw3.h>
@@ -478,7 +477,6 @@ void ModelPreview::Clear()
     materials.clear();
     materialTextures.clear();
     materialIndex = 0;
-    textureStatus.clear();
     active = false;
     name.clear();
     error.clear();
@@ -639,6 +637,7 @@ void ModelPreview::Update(const PackageSession& session)
             throw std::runtime_error("Model preview currently supports big-endian geometry only.");
         if (DecodeGeometry(session)) {
             active = true;
+            Log("Model " + name + ": " + std::to_string(meshCount) + " meshes, " + std::to_string(vertexCount) + " vertices, " + std::to_string(triangleCount) + " triangles (static preview).");
             if (sameModel) { yaw = oldYaw; pitch = oldPitch; distance = oldDistance; materialIndex = std::clamp(oldMaterial, 0, std::max(0, int(materials.size()) - 1)); }
         }
     }
@@ -646,6 +645,7 @@ void ModelPreview::Update(const PackageSession& session)
     {
         active = true;
         error = ex.what();
+        Log("Model " + name + ": " + error);
     }
 }
 
@@ -759,66 +759,14 @@ void ModelPreview::RenderScene(int w, int h)
 
 }
 
-void ModelPreview::Draw(PackageSession* session)
+void ModelPreview::Draw(PackageSession*)
 {
     ImGui::TextWrapped("%s", name.c_str());
     if (!error.empty())
     {
-        ImGui::TextWrapped("Preview unavailable: %s", error.c_str());
+        ImGui::TextDisabled("Preview unavailable. See Debug log.");
         return;
     }
-    ImGui::TextDisabled("%zu mesh%s, %zu verts, %zu tris",
-        meshCount, meshCount == 1 ? "" : "es", vertexCount, triangleCount);
-    if (ImGui::Checkbox("Package textures", &textured)) renderDirty = true;
-    ImGui::SameLine();
-    if (ImGui::Checkbox("Two-sided", &twoSided)) renderDirty = true;
-    ImGui::SameLine();
-    if (ImGui::Button("Frame model")) { ComputeBounds(); renderDirty = true; }
-    if (!materials.empty() && ImGui::CollapsingHeader("Materials / replace textures")) {
-        if (ImGui::BeginCombo("Material", materials[materialIndex].name.c_str())) {
-            for (size_t i = 0; i < materials.size(); ++i)
-                if (ImGui::Selectable(materials[i].name.c_str(), materialIndex == int(i))) materialIndex = int(i);
-            ImGui::EndCombo();
-        }
-        auto& mat = materials[materialIndex];
-        const auto& texture = materialTextures[materialIndex];
-        if (mat.texture) ImGui::TextWrapped("Package texture: %s", mat.texture->GetName().c_str());
-        else if (mat.textureCRC) ImGui::TextWrapped("Texture CRC 0x%08X is in another package. A PNG can be previewed here.", mat.textureCRC);
-        else ImGui::TextWrapped("This material has no base-color texture.");
-        if (ImGui::Checkbox("Cutout alpha", &mat.alphaCutout)) renderDirty = true;
-        if (!mat.passes.empty() && ImGui::Button("Export material shaders...")) {
-            try {
-                const auto path = PickFile(glfwGetCurrentContext(), "Shader containers", "bin", true, SanitizeFileName(mat.name) + ".bin");
-                if (!path.empty()) { ExportModelShaders(mat, path); textureStatus = "Shader containers and binding metadata exported for XenosRecomp."; }
-            } catch (const std::exception& ex) { textureStatus = ex.what(); }
-        }
-        if (!texture.png.empty()) ImGui::TextWrapped("Preview: %s", texture.png.c_str());
-        try {
-            if (session && mat.texture && ImGui::Button("Extract package PNG...")) {
-                const auto path = PickFile(glfwGetCurrentContext(), "PNG image", "png", true, SanitizeFileName(mat.texture->GetName()) + ".png");
-                if (!path.empty()) { ExtractTexture(*session, *mat.texture, path); textureStatus = "Package texture extracted."; }
-            }
-            if (ImGui::Button("Preview PNG...")) {
-                const auto path = PickFile(glfwGetCurrentContext(), "PNG image", "png", false);
-                if (!path.empty()) LoadPNG(materialIndex, path);
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Use package texture")) UsePackageTexture(materialIndex);
-            if (session && mat.texture && !texture.png.empty()) {
-                if (ImGui::Button("Apply PNG to package")) ApplyPNG(*session, materialIndex);
-                ImGui::TextWrapped("Applies to every use of this texture. Save As writes the edited package.");
-            }
-        } catch (const std::exception& ex) { textureStatus = ex.what(); }
-        if (!texture.error.empty()) ImGui::TextWrapped("%s", texture.error.c_str());
-        if (!textureStatus.empty()) ImGui::TextWrapped("%s", textureStatus.c_str());
-        if (ImGui::TreeNode("UV settings")) {
-            if (ImGui::DragFloat("Integer UV divisor", &uvDivisor, 1, 1, 65536, "%.0f", ImGuiSliderFlags_AlwaysClamp)) renderDirty = true;
-            ImGui::TextWrapped("1024 is confirmed in the OfficeSuit vertex shader. Animated UV transforms are not emulated.");
-            ImGui::TreePop();
-        }
-    }
-    ImGui::TextDisabled("Drag to orbit, scroll to zoom (static mesh preview)");
-
     const ImVec2 available = ImGui::GetContentRegionAvail();
     if (available.x < 32 || available.y < 32) return;
 
@@ -828,9 +776,15 @@ void ModelPreview::Draw(PackageSession* session)
     const int rw = std::max(1, static_cast<int>(pixelW * fit));
     const int rh = std::max(1, static_cast<int>(pixelH * fit));
 
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    drawList->ChannelsSplit(2);
+    drawList->ChannelsSetCurrent(1);
+    const bool overHUD = DrawHUD(origin.x, origin.y, available.x, available.y);
+    ImGui::SetCursorScreenPos(origin);
     ImGui::InvisibleButton("##modelview", available);
-    const bool hovered = ImGui::IsItemHovered();
-    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+    const bool hovered = ImGui::IsItemHovered() && !overHUD;
+    if (!overHUD && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
     {
         const ImVec2 delta = ImGui::GetIO().MouseDelta;
         renderDirty = renderDirty || delta.x != 0 || delta.y != 0;
@@ -857,15 +811,17 @@ void ModelPreview::Draw(PackageSession* session)
     catch (const std::exception& ex)
     {
         error = ex.what();
-        ImGui::TextWrapped("Render error: %s", error.c_str());
+        Log("Render error: " + error);
+        drawList->ChannelsMerge();
         return;
     }
 
-    const ImVec2 origin = ImGui::GetItemRectMin();
-    ImGui::GetWindowDrawList()->AddImage(
+    drawList->ChannelsSetCurrent(0);
+    drawList->AddImage(
         static_cast<ImTextureID>(colorTex),
         origin, ImVec2(origin.x + available.x, origin.y + available.y),
         ImVec2(0, 1), ImVec2(1, 0));
+    drawList->ChannelsMerge();
 }
 unsigned int ModelPreview::UploadTexture(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height)
 {
@@ -920,7 +876,7 @@ unsigned int ModelPreview::MaterialTextureID(size_t index)
         const GLint address = materials[index].addressMode == 1 ? GL_CLAMP_TO_EDGE : GL_REPEAT;
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, address);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, address);
-    } catch (const std::exception& ex) { cached.error = ex.what(); }
+    } catch (const std::exception& ex) { cached.error = ex.what(); Log("Texture " + materials[index].name + ": " + cached.error); }
     return cached.texture;
 }
 
@@ -933,7 +889,7 @@ void ModelPreview::LoadPNG(size_t index, const std::string& path)
     if (cached.texture) glDeleteTextures(1, &cached.texture);
     textureBytes -= cached.bytes;
     cached = {texture, true, size_t(image.width) * image.height * 4, path, {}};
-    textureStatus = "PNG preview only. The package has not been changed.";
+    Log("PNG preview for " + materials[index].name + ": " + path + " (package unchanged).");
     textured = true;
     renderDirty = true;
 }
@@ -945,7 +901,7 @@ void ModelPreview::UsePackageTexture(size_t index)
     if (cached.texture) glDeleteTextures(1, &cached.texture);
     textureBytes -= cached.bytes;
     cached = {};
-    textureStatus.clear();
+    Log("Restored package texture for " + materials[index].name + ".");
     textured = true;
     renderDirty = true;
 }
@@ -958,6 +914,5 @@ void ModelPreview::ApplyPNG(PackageSession& session, size_t index)
     if (cached.png.empty()) throw std::runtime_error("Preview a replacement PNG first.");
     const auto texture = RZTexture::Load(*package, *materials[index].texture);
     ReplaceTexture(session, *materials[index].texture, cached.png, texture.desc.width, texture.desc.height);
-    textureStatus = session.status;
     renderDirty = true;
 }

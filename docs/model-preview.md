@@ -3,12 +3,14 @@
 ## Opening and replacing a texture
 
 1. Open `BaseGameplay.pkz`, expand `Gen_GeometryLibrary`, and select a named geometry resource such as `SpiderManAmazing_Casual[Hi]`.
-2. Enable **Package textures** in Resource view. Textures resolve through the material's sampler CRC, not filename guesses. Disable it for a solid preview.
-3. Expand **Materials / replace textures** and select a material. `OfficeSuit` uses `SMA_PPCasual_D[Hi]`; Skin, Eye and Hair share the head texture.
+2. Enable **Package textures** in the bottom-right overlay on the model. Textures resolve through the material's sampler CRC, not filename guesses. Disable it for a solid preview.
+3. Choose a material in the overlay or in **Model exports / textures**, below Fields on the right. `OfficeSuit` uses `SMA_PPCasual_D[Hi]`; Skin, Eye and Hair share the head texture.
 4. **Extract package PNG...** saves the original image for editing. **Preview PNG...** changes that material's preview without editing the package. **Use package texture** discards the preview override and uses the package's current texture.
 5. **Apply PNG to package** replaces the referenced texture using PKZLib's existing encoder, its original dimensions, mip layout and compression format. This affects every material sharing that texture. Use **File → Save As** to write an edited copy.
 
 A PNG can be previewed even when the referenced texture lives in another package. Applying it requires the texture to be in the open package. A preview override does not add a new texture resource or change a material's sampler reference. Selecting another model or editing/reloading the package clears preview overrides.
+
+The overlay contains **Two-sided**, **Frame model** and an **Adjustments...** popup for the UV divisor and per-material **Cutout alpha**. Operation results and diagnostic errors appear in the Debug log below the model.
 
 **Cutout alpha** is optional per material. Diffuse alpha can encode other information: applying an alpha test indiscriminately removes the casual character's face. Exact game alpha state is not inferred here. **Two-sided** and **Frame model** help inspect the geometry.
 

@@ -209,6 +209,7 @@ void Workspace::Draw()
     if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
     if (ImGui::IsItemActive()) logHeight -= ImGui::GetIO().MouseDelta.y;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
+    for (const auto& message : modelPreview.TakeLogMessages()) AddLog(message);
     ImGui::BeginChild("Debug log", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
     const bool follow = ImGui::GetScrollY() >= ImGui::GetScrollMaxY();
     ImGui::TextUnformatted("Debug log");
@@ -225,10 +226,30 @@ void Workspace::Draw()
     if (ImGui::IsItemActive()) fieldsWidth -= ImGui::GetIO().MouseDelta.x;
     ImGui::SameLine(0, 0);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
-    ImGui::BeginChild("Fields", ImVec2(0, bodyHeight), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::BeginChild("Inspector column", ImVec2(0, bodyHeight));
+    const float inspectorTop = ImGui::GetCursorPosY();
+    const bool modelActions = modelPreview.active;
+    modelActionsHeight = std::clamp(modelActionsHeight, 100.f, std::max(100.f, bodyHeight - 120.f));
+    const float fieldsHeight = modelActions ? std::max(1.f, bodyHeight - modelActionsHeight - gap) : bodyHeight;
+    ImGui::BeginChild("Fields", ImVec2(0, fieldsHeight), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::BeginDisabled(IsBusy());
     DrawFields();
     ImGui::EndDisabled();
+    ImGui::EndChild();
+    if (modelActions) {
+        ImGui::SetCursorPosY(inspectorTop + fieldsHeight);
+        ImGui::InvisibleButton("Model exports splitter", ImVec2(ImGui::GetContentRegionAvail().x, gap));
+        if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        if (ImGui::IsItemActive()) modelActionsHeight -= ImGui::GetIO().MouseDelta.y;
+        ImGui::SetCursorPosY(inspectorTop + fieldsHeight + gap);
+        ImGui::BeginChild("Model exports", ImVec2(0, modelActionsHeight), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::BeginDisabled(IsBusy());
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 4));
+        modelPreview.DrawActions(session);
+        ImGui::PopStyleVar();
+        ImGui::EndDisabled();
+        ImGui::EndChild();
+    }
     ImGui::EndChild();
     ImGui::PopStyleVar();
     ImGui::BeginChild("Status", ImVec2(0, statusHeight), ImGuiChildFlags_Borders);

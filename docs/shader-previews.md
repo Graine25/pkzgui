@@ -19,9 +19,11 @@ Conversion is optional and defaults to OFF. A build without it can still load a 
 2. In **Model exports / textures**, select **OfficeSuit** and expand **Shader previews**.
 3. Select **Technique 0 / static**, then **Preview game shaders**. Conversion runs in the background; progress and failures appear in the Debug log. It installs only if the selected model and package revision still match.
 4. Toggle **Use game shader preview** to compare with the base-color renderer. The model overlay's **Textures** toggle switches all textured/shader previews to solid geometry and back.
-5. The material's original sampler CRCs resolve its package textures, including additional 2D normal/specular inputs. **Package texture / Retexture** still selects the base texture used by this shader. Loading a PNG previews it; applying it to the package remains a separate action.
+5. The material's original sampler CRCs resolve its package textures, including 2D normal/specular inputs and cube reflection maps. **Package texture / Retexture** still selects the base texture used by this shader. Loading a PNG previews it; applying it to the package remains a separate action.
 6. **Save editable shader...** writes a `.gsxshader` asset and two companions, `.gsxshader.vert.hlsl` and `.gsxshader.frag.hlsl`. Edit the companions and press **Reload HLSL edits**. Keep the generated entry point, vertex semantics and constant/texture binding contract. Reflection names/registers come from the original pass; changing that contract requires an updated asset/converter.
 7. A failed compile/link keeps the last working preview. Save again after a successful edit to update the `.gsxshader` asset. **Load shader preview...** loads that saved result on another compatible material without recompiling it.
+
+Local DLC verification also decoded all four `_DLC001.pak` cube maps and converted, linked and drew Prodigy static slots 0–4 and 6–10. Slot 5 has no embedded pixel stage and is not selectable as a VS/PS preview. A slot-0 check across all 23 DLC materials drew 16 successfully; seven still require `TEXCOORD1`, which the static preview rejects. This is a compatibility check, not confirmation of each slot’s game rendering purpose.
 
 The OfficeSuit static pass was converted from the local BaseGameplay package and rendered on macOS arm64. This verifies the conversion/render path; it does not establish exact game lighting or support for every material pass. Game packages, converted assets and shader sources are local derived data and are not committed.
 
@@ -47,7 +49,7 @@ The most useful next input is one known-good OfficeSuit draw captured from reeot
 
 - Static, stream-zero position/normal/tangent/color/base UV0 inputs. Skin/morph/instance streams and alternate UV sets are rejected for guest previews; they remain future work.
 - Embedded VS/PS pairs with compatible interpolants. Missing/referenced-only shaders require their source package.
-- Up to 16 2D shader texture slots. Cube/volume textures are rejected; unresolved package textures use white and produce a Debug log entry. No render-target/history textures or scene passes are recreated.
+- Up to 16 active 2D/cube texture bindings. Static texture heap accesses are mapped to separate, typed OpenGL units, avoiding sampler-type conflicts and unused 16-slot arrays. Cube maps use their own header and decode all six base faces; currently supported layouts store equally sized face chains with tiled mip surfaces. Volume/1D textures and dynamic texture indexing remain unsupported. Unresolved package textures use a matching white fallback and produce a Debug log entry. No render-target/history textures or scene passes are recreated.
 - GLSL 150/OpenGL uniform buffers, with cached geometry/textures/programs and redraw only when the preview changes. Conversion and HLSL compilation run outside the frame loop; GPU linking/install occurs on the GUI thread.
 - Geometry and texture uploads retain the existing memory budgets. Shader source fields are bounded to 4 MiB, saved assets to 20 MiB, and register metadata to the 256-register files.
 

@@ -83,7 +83,12 @@ jobs:
         run: cmake --build build --parallel 2
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure --timeout 120
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            xvfb-run -a ctest --test-dir build --output-on-failure --timeout 120
+          else
+            ctest --test-dir build --output-on-failure --timeout 120
+          fi
 
       - name: Package
         env:

@@ -36,6 +36,9 @@ endif()
 
 add_executable(pkzgui
     main.cpp
+    model/model_preview.cpp
+    model/model_material.cpp
+    model/model_geometry.cpp
     ui/app_menu.cpp
     ui/workspace.cpp
     ui/workspace_actions.cpp
@@ -83,4 +86,20 @@ if(PKZGUI_BUILD_TESTS)
     target_link_libraries(audio_sample_test PRIVATE pkzlib Threads::Threads)
     set_target_properties(audio_sample_test PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
     add_test(NAME audio_sample COMMAND audio_sample_test)
+    add_executable(model_preview_test
+        ../tests/model_preview_test.cpp
+        model/model_preview.cpp
+        model/model_material.cpp
+        model/model_geometry.cpp
+        package/resource_selection.cpp
+        texture/texture_actions.cpp
+        platform/file_io.cpp
+        platform/file_dialog.cpp)
+    target_include_directories(model_preview_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(model_preview_test PRIVATE pkzlib imgui nfd Threads::Threads)
+    target_compile_definitions(model_preview_test PRIVATE GL_SILENCE_DEPRECATION)
+    set_target_properties(model_preview_test PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
+    add_test(NAME model_selection COMMAND model_preview_test)
+    add_test(NAME model_render COMMAND model_preview_test --gl)
+    set_tests_properties(model_render PROPERTIES SKIP_RETURN_CODE 77)
 endif()

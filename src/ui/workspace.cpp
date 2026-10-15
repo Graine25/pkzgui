@@ -21,28 +21,28 @@ namespace
         if (chunk.GetMaskedID() == GenSub_Resource)
             if (const CMChunk* header = chunk.FindChild(GenSub_ResourceHeader))
                 try {
-                    const auto name = CMChunkResourceHeader(*header).GetName();
-                    if (!name.empty()) { title = name; namedResource = true; }
-                } catch (const std::exception&) {}
-        const std::string label = namedResource ? title : title + " [" + Hex(chunk.GetMaskedID()) +
-            "] v" + std::to_string(chunk.version) + (chunk.GetHasChildren() ? " folder " : " leaf ") +
-            std::to_string(chunk.length);
-        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
-        if (chunk.children.empty())
-            flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-        if (root)
-            flags |= ImGuiTreeNodeFlags_DefaultOpen;
-        if (&chunk == session.selected)
-            flags |= ImGuiTreeNodeFlags_Selected;
-        const bool open = ImGui::TreeNodeEx(&chunk, flags, "%s", label.c_str());
-        if (ImGui::IsItemClicked())
-            session.selected = &chunk;
-        if (open && !chunk.children.empty())
-        {
-            for (const CMChunk& child : chunk.children)
-                DrawChunk(child, session);
-            ImGui::TreePop();
-        }
+                const auto name = CMChunkResourceHeader(*header).GetName();
+                if (!name.empty()) { title = name; namedResource = true; }
+            } catch (const std::exception&) {}
+            const std::string label = namedResource ? title : title + " [" + Hex(chunk.GetMaskedID()) +
+                "] v" + std::to_string(chunk.version) + (chunk.GetHasChildren() ? " folder " : " leaf ") +
+                std::to_string(chunk.length);
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
+            if (chunk.children.empty())
+                flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+            if (root)
+                flags |= ImGuiTreeNodeFlags_DefaultOpen;
+            if (&chunk == session.selected)
+                flags |= ImGuiTreeNodeFlags_Selected;
+            const bool open = ImGui::TreeNodeEx(&chunk, flags, "%s", label.c_str());
+            if (ImGui::IsItemClicked())
+                session.selected = &chunk;
+            if (open && !chunk.children.empty())
+            {
+                for (const CMChunk& child : chunk.children)
+                    DrawChunk(child, session);
+                ImGui::TreePop();
+            }
     }
 
     void DrawRow(const char* name, const char* type, const std::string& value)
@@ -107,6 +107,13 @@ void Workspace::DrawFields()
                 DrawRow("mipLevels", "u32", std::to_string(preview.descriptor.mipLevels));
                 DrawRow("depth", "u32", std::to_string(preview.descriptor.depth));
                 DrawRow("d3dFormat", "u32", Hex(preview.descriptor.d3dFormat));
+            }
+            if (modelPreview.active && modelPreview.error.empty())
+            {
+                DrawRow("Model", "string", modelPreview.name);
+                DrawRow("meshes", "u32", std::to_string(modelPreview.meshCount));
+                DrawRow("vertices", "u32", std::to_string(modelPreview.vertexCount));
+                DrawRow("triangles", "u32", std::to_string(modelPreview.triangleCount));
             }
             if (audio)
             {
@@ -179,10 +186,12 @@ void Workspace::Draw()
     ImGui::SameLine(0, 0);
     RefreshSelection();
     preview.Update(session);
+    modelPreview.Update(session);
     ImGui::BeginChild("Resource view", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::TextUnformatted("Resource view");
     ImGui::Separator();
     if (preview.active) preview.Draw();
+    else if (modelPreview.active) modelPreview.Draw(&session);
     else if (audio)
     {
         ImGui::TextWrapped("%s", audio->name.c_str());
@@ -191,7 +200,7 @@ void Workspace::Draw()
         ImGui::SameLine();
         if (ImGui::Button("Extract WAV...")) HandleAction(MenuAction::ExtractAudio, glfwGetCurrentContext());
     }
-    else ImGui::TextDisabled("Select a texture or audio sample.");
+    else ImGui::TextDisabled("Select a texture, geometry model, or audio sample.");
     ImGui::EndChild();
     ImGui::EndDisabled();
     ImGui::PopStyleVar();

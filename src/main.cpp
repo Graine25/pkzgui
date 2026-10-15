@@ -133,6 +133,7 @@ int main(int argc, char** argv)
 
     workspace.player.Stop();
     workspace.preview.Clear();
+    workspace.modelPreview.Clear();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

@@ -40,7 +40,14 @@ int main(int argc, char** argv)
             std::vector<uint8_t> replacement(8 * 8 * 4, 0);
             for (size_t i = 0; i < replacement.size(); i += 4) { replacement[i] = 255; replacement[i + 3] = 255; }
             WriteFile(dir / "replacement.png", BUPng::EncodeRGBA8(replacement.data(), 8, 8));
-            ReplaceTexture(session, (dir / "replacement.png").u8string(), 16, 16);
+            const auto modelHeader = SelectedResource(*session.package,session.selected);
+            const auto textureSelection = session.selected;
+            session.selected = &session.package->rootChunks[0];
+            ExtractTexture(session, *modelHeader, (dir/"export-from-model.png").u8string());
+            Check(BUPng::Decode(ReadFile(dir/"export-from-model.png")).rgba == old.DecodeLevel0(), "Model texture export pixels differ");
+            ReplaceTexture(session, *modelHeader, (dir / "replacement.png").u8string(), 16, 16);
+            Check(session.selected == &session.package->rootChunks[0], "Explicit texture replacement changed the model selection");
+            session.selected = textureSelection;
             const auto changed = SelectedTexture(session);
             Check(session.dirty && changed.desc.d3dFormat == old.desc.d3dFormat && changed.gpuData.size() == old.gpuData.size(), "Layout/format changed");
             const auto rgba = changed.DecodeLevel0();

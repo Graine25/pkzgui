@@ -1,0 +1,70 @@
+#pragma once
+#include "package/package_session.h"
+#include "model/model_geometry.h"
+#include <vector>
+#include <string>
+#include <cmath>
+
+struct ModelPreview
+{
+    ModelPreview() = default;
+    ModelPreview(const ModelPreview&) = delete;
+    ModelPreview& operator=(const ModelPreview&) = delete;
+    ~ModelPreview();
+
+    void Update(const PackageSession& session);
+    void Draw(PackageSession* session = nullptr);
+    void SetTextured(bool enabled) { textured = enabled; renderDirty = true; }
+    void LoadPNG(size_t material, const std::string& path);
+    void UsePackageTexture(size_t material);
+    void ApplyPNG(PackageSession& session, size_t material);
+    const std::vector<ModelMesh>& Meshes() const { return meshes; }
+    const std::vector<ModelMaterial>& Materials() const { return materials; }
+    void Clear();
+
+    bool active = false;
+    std::string name, error;
+    size_t meshCount = 0, vertexCount = 0, triangleCount = 0;
+
+private:
+    const CMChunk* selected = nullptr;
+    const PKPackage* package = nullptr;
+    uint64_t revision = 0;
+
+    std::vector<ModelMesh> meshes;
+    std::vector<ModelMaterial> materials;
+    struct MaterialTexture {
+        unsigned int texture = 0;
+        bool attempted = false;
+        size_t bytes = 0;
+        std::string png, error;
+    };
+    std::vector<MaterialTexture> materialTextures;
+    size_t textureBytes = 0;
+    bool textured = false, twoSided = true;
+    int materialIndex = 0;
+    float uvDivisor = 1024.f;
+    std::string textureStatus;
+    unsigned int MaterialTextureID(size_t index);
+    unsigned int UploadTexture(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height);
+    struct GPUMesh { unsigned int vao = 0, positions = 0, normals = 0, indices = 0, texcoords = 0; };
+    std::vector<GPUMesh> gpuMeshes;
+    bool renderDirty = true;
+    unsigned int program = 0;
+    unsigned int fbo = 0, colorTex = 0, depthRbo = 0, whiteTexture = 0;
+    int fboW = 0, fboH = 0;
+
+    // Orbit camera
+    float yaw = 0.6f, pitch = 0.35f, distance = 3.0f;
+    float centerX = 0, centerY = 0, centerZ = 0;
+    float bboxMin[3]{}, bboxMax[3]{};
+    bool hasBBox = false;
+
+    void EnsureProgram();
+    void EnsureFBO(int w, int h);
+    void DestroyGL();
+    bool DecodeGeometry(const PackageSession& session);
+    void ComputeBounds();
+    void UploadMeshes();
+    void RenderScene(int w, int h);
+};

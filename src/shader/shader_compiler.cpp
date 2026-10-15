@@ -5,6 +5,7 @@
 #include "gsx_shader_common.h"
 #include "spirv_glsl.hpp"
 #include <mutex>
+#include <set>
 #include <regex>
 #include <sstream>
 #include <stdexcept>
@@ -99,12 +100,36 @@ std::string GLSL(const std::string& hlsl,bool pixel)
     if(!pixel)for(const auto& r:resources.stage_outputs)c.set_name(r.id,"gsxVarying"+std::to_string(c.get_decoration(r.id,spv::DecorationLocation)));
     c.build_dummy_sampler_for_combined_images();
     c.build_combined_image_samplers();
+    struct Heap { std::string name, type; };
+    std::vector<Heap> heaps;
     for(const auto& sampler:c.get_combined_image_samplers()){
-        const auto& type=c.get_type(c.get_type_from_variable(sampler.image_id).self);
-        if(type.image.dim!=spv::Dim2D)throw std::runtime_error("This shader requires non-2D texture resources.");
-        c.set_name(sampler.combined_id,"gsxTextures");
+        const auto& type=c.get_type_from_variable(sampler.image_id);
+        const std::string dimension=type.image.dim==spv::Dim2D?"2D":type.image.dim==spv::DimCube?"Cube":"";
+        if(dimension.empty())throw std::runtime_error("Shader requires unsupported volume/1D texture inputs.");
+        const auto name="gsxHeap"+std::to_string(sampler.combined_id);
+        heaps.push_back({name,dimension});c.set_name(sampler.combined_id,name);
     }
-    return c.compile();
+    std::string result=c.compile();
+    std::set<std::string> declared;
+    for(const auto& heap:heaps){
+        const std::regex declaration("uniform sampler"+heap.type+" "+heap.name+R"(\[16\];)");
+        if(!std::regex_search(result,declaration))throw std::runtime_error("Unexpected shader texture heap layout.");
+        result=std::regex_replace(result,declaration,"");
+        const std::regex use(heap.name+R"(\[([0-9]+)u?\])");
+        std::smatch match;
+        std::string uniforms;
+        while(std::regex_search(result,match,use)){
+            const auto slot=std::stoul(match[1]);
+            if(slot>=16)throw std::runtime_error("Shader texture slot exceeds the preview binding range.");
+            const auto name="gsxTexture"+heap.type+"_"+std::to_string(slot);
+            if(declared.insert(name).second)uniforms+="uniform sampler"+heap.type+" "+name+";\n";
+            result.replace(match.position(),match.length(),name);
+        }
+        if(std::regex_search(result,std::regex("\\b"+heap.name+"\\b")))throw std::runtime_error("Dynamic texture indexing requires a runtime binding capture.");
+        const auto insertion=result.find("\n\n");
+        result.insert(insertion==std::string::npos?result.find('\n')+1:insertion+2,uniforms);
+    }
+    return result;
 }
 void Reflect(const ShaderRecompiler& recompiler,bool pixel,ShaderAsset& asset)
 {

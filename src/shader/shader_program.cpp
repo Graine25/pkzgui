@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <regex>
+#include <set>
 #include <stdexcept>
 
 namespace {
@@ -52,13 +54,13 @@ void Defaults(ShaderConstants& data,const ShaderAsset& asset,const float* mvp,co
 ShaderGLState::ShaderGLState()
 {
     auto& g=GL();glGetIntegerv(0x84E0,&activeTexture);glGetIntegerv(0x8A28,&uniformBuffer);
-    for(unsigned i=0;i<16;++i){g.glActiveTexture(0x84C0+i);glGetIntegerv(GL_TEXTURE_BINDING_2D,&textures[i]);}
+    for(unsigned i=0;i<16;++i){g.glActiveTexture(0x84C0+i);glGetIntegerv(GL_TEXTURE_BINDING_2D,&textures[i]);glGetIntegerv(0x8514,&cubes[i]);}
     for(unsigned i=0;i<3;++i)g.glGetIntegeri_v(0x8A28,i,&buffers[i]);
     g.glActiveTexture(activeTexture);
 }
 ShaderGLState::~ShaderGLState()
 {
-    auto& g=GL();for(unsigned i=0;i<16;++i){g.glActiveTexture(0x84C0+i);glBindTexture(GL_TEXTURE_2D,textures[i]);}
+    auto& g=GL();for(unsigned i=0;i<16;++i){g.glActiveTexture(0x84C0+i);glBindTexture(GL_TEXTURE_2D,textures[i]);glBindTexture(0x8513,cubes[i]);}
     for(unsigned i=0;i<3;++i)g.glBindBufferBase(0x8A11,i,buffers[i]);
     g.glBindBuffer(0x8A11,uniformBuffer);g.glActiveTexture(activeTexture);
 }
@@ -66,11 +68,23 @@ ShaderProgram::~ShaderProgram(){Clear();}
 void ShaderProgram::Clear()
 {
     if(program){auto& g=GL();g.glDeleteProgram(program);g.glDeleteBuffers(3,buffers);}
-    program=0;std::fill_n(buffers,3,0);enabled=false;
+    textures.clear();program=0;std::fill_n(buffers,3,0);enabled=false;
 }
 void ShaderProgram::Load(const ShaderAsset& source)
 {
     if(source.vertexGLSL.empty()||source.pixelGLSL.empty())throw std::runtime_error("Shader preview needs both stages.");
+    struct Binding { TextureBinding texture; std::string name; };
+    std::vector<Binding> bindings;
+    std::set<std::string> names;
+    const std::regex uniform(R"(uniform sampler(2D|Cube) (gsxTexture(?:2D|Cube)_([0-9]+));)");
+    for(const auto* text:{&source.vertexGLSL,&source.pixelGLSL})
+        for(std::sregex_iterator i(text->begin(),text->end(),uniform),end;i!=end;++i){
+            const auto name=(*i)[2].str();
+            if(!names.insert(name).second)continue;
+            const auto slot=std::stoul((*i)[3]);
+            if(slot>=16 || bindings.size()>=16)throw std::runtime_error("Shader exceeds 16 preview texture bindings.");
+            bindings.push_back({{unsigned(slot),unsigned(bindings.size()),(*i)[1]=="Cube"?0x8513u:0x0DE1u},name});
+        }
     auto& g=GL();const auto vs=Compile(0x8B31,source.vertexGLSL);unsigned ps=0,next=0;
     try{
         ps=Compile(0x8B30,source.pixelGLSL);next=g.glCreateProgram();g.glAttachShader(next,vs);g.glAttachShader(next,ps);
@@ -84,7 +98,15 @@ void ShaderProgram::Load(const ShaderAsset& source)
     const char* blocks[]={"type_GsxVertexBlock","type_GsxPixelBlock","type_GsxSharedBlock"};
     for(unsigned i=0;i<3;++i){const auto block=g.glGetUniformBlockIndex(program,blocks[i]);if(block!=0xFFFFFFFFu)g.glUniformBlockBinding(program,block,i);}
     int previous=0;glGetIntegerv(0x8B8D,&previous);g.glUseProgram(program);
-    for(int i=0;i<16;++i)g.glUniform1i(g.glGetUniformLocation(program,("gsxTextures["+std::to_string(i)+"]").c_str()),i);
+    for(const auto& binding:bindings){
+        g.glUniform1i(g.glGetUniformLocation(program,binding.name.c_str()),binding.texture.unit);
+        textures.push_back(binding.texture);
+    }
+    if(bindings.empty() && g.glGetUniformLocation(program,"gsxTextures[0]")>=0)
+        for(unsigned i=0;i<16;++i){
+            g.glUniform1i(g.glGetUniformLocation(program,("gsxTextures["+std::to_string(i)+"]").c_str()),i);
+            textures.push_back({i,i,0x0DE1});
+        }
     g.glUseProgram(previous);
 }
 void ShaderProgram::LoadConstants(const std::string& path)

@@ -2,6 +2,7 @@
 #include "package/resource_selection.h"
 #include "imgui.h"
 #include "texture/texture_actions.h"
+#include "texture/cube_texture.h"
 #include "platform/file_io.h"
 #include "BaseUtils/BUPng.h"
 #include <GLFW/glfw3.h>
@@ -102,6 +103,38 @@ PackageSession TexturedFixture()
     auto post = texture.BuildPostLoadData(0x123400); post.offset = 0x123400; root.AddChild(std::move(post));
     session.package->rootChunks.push_back(std::move(root)); session.selected = &session.package->rootChunks[0];
     return session;
+}
+
+CMChunk CubeFixture()
+{
+    auto cube=CMChunk::Leaf(Texture_Data,7,{});
+    const auto format=XenosTexture::D3DFormat::Decode(XenosTexture::D3DFormat::kA8R8G8B8Tiled);
+    for(uint32_t value:{1u,1u,64u,1u,0u,format.raw,0u,0u,0u,0u,0u,0u,0u})cube.Append(value);
+    for(unsigned face=0;face<6;++face){
+        std::vector<uint8_t> rgba(64*64*4);
+        for(size_t i=0;i<rgba.size();i+=4){
+            rgba[i]=face?255:0;rgba[i+1]=face?0:255;rgba[i+2]=face?255:0;rgba[i+3]=255;
+        }
+        const auto linear=XenosTexture::EncodeRGBA8(rgba.data(),64,64,format);
+        const auto tiled=XenosTexture::Tile(linear.data(),64,64,format);
+        cube.AppendBytes(tiled.data(),tiled.size());
+    }
+    return cube;
+}
+
+void CubeTests()
+{
+    auto data=CubeFixture();const auto cube=DecodeCubeTexture(data);
+    Check(cube.size==64,"Cube header size was read as a 2D descriptor");
+    for(unsigned face=0;face<6;++face){
+        const auto& rgba=cube.faces[face];
+        Check(rgba.size()==64*64*4,"Cube face size is wrong");
+        Check(face?rgba[0]>240 && rgba[1]<10:rgba[0]<10 && rgba[1]>240,"Cube face offset or pixel format is wrong");
+    }
+    data.data.pop_back();bool rejected=false;
+    try{DecodeCubeTexture(data);}catch(const std::exception&){rejected=true;}
+    Check(rejected,"Truncated cube face data was accepted");
+    std::puts("PASS: cube header, six face offsets, pixel format and truncation");
 }
 
 void MaterialTests()
@@ -400,7 +433,39 @@ void main() {
         const auto edited=CompileShaderEdits(guest,shaderPath+".vert.hlsl",shaderPath+".frag.hlsl");
         WriteShaderAsset(edited,shaderPath); preview.LoadShaderPreview(0,shaderPath); draw();
         Check(colorCount(true)>100,"HLSL edits did not reach the guest preview");
+        guest.pixelHLSL=R"(Texture2D<float4> g_Texture2DDescriptorHeap[] : register(t0,space0);
+TextureCube<float4> g_TextureCubeDescriptorHeap[] : register(t0,space2);
+SamplerState g_SamplerDescriptorHeap[] : register(s0,space3);
+float4 shaderMain() : SV_Target0 {
+    return 0.5*(g_Texture2DDescriptorHeap[0].Sample(g_SamplerDescriptorHeap[0],float2(0.5,0.5))+
+        g_TextureCubeDescriptorHeap[1].Sample(g_SamplerDescriptorHeap[1],float3(1,0,0)));
+})";
+        WriteShaderAsset(guest,shaderPath);
+        const auto mixed=CompileShaderEdits(guest,shaderPath+".vert.hlsl",shaderPath+".frag.hlsl");
+        ShaderProgram program;program.Load(mixed);
+        Check(program.textures.size()==2 && program.textures[0].unit!=program.textures[1].unit &&
+            program.textures[0].target!=program.textures[1].target,"2D/cube compiler bindings conflict");
+        program.Clear();
     }
+    auto cubeRoot=CMChunk::Container(Root,1);
+    auto library=CMChunk::Container(Gen_TextureLibrary,1);
+    auto cubeResource=CMChunk::Container(GenSub_Resource,1);
+    auto header=CMChunkResourceHeader::Build(0x12345678,4,0x1f,0,0x987600,0,"fixture cube");
+    cubeResource.AddChild(header);library.AddChild(std::move(cubeResource));cubeRoot.AddChild(std::move(library));
+    auto post=CMChunk::Container(Gen_PostLoadData,1);post.offset=0x987600;post.AddChild(header);post.AddChild(CubeFixture());
+    cubeRoot.AddChild(std::move(post));textured.package->rootChunks.push_back(std::move(cubeRoot));
+    auto& samplerBytes=textured.package->rootChunks[0].children.back().children[0].data;
+    for(int i=0;i<4;++i)samplerBytes[244+i]=uint8_t(0x12345678u>>(24-8*i));
+    textured.selected=&textured.package->rootChunks[0];++textured.revision;preview.Update(textured);
+    guest.pixelGLSL="#version 150\nuniform samplerCube gsxTextureCube_0; out vec4 color; void main(){color=texture(gsxTextureCube_0,vec3(1,0,0));}";
+    WriteShaderAsset(guest,shaderPath);preview.LoadShaderPreview(0,shaderPath);
+    unsigned sentinelCube;glGenTextures(1,&sentinelCube);activeTexture(0x84C0);glBindTexture(0x8513,sentinelCube);
+    draw();glGetIntegerv(0x8514,&saved);Check(saved==int(sentinelCube),"Cube binding leaked into caller");
+    Check(colorCount(true)>100,"Cube +X face did not reach the shader");
+    guest.pixelGLSL="#version 150\nuniform samplerCube gsxTextureCube_0; out vec4 color; void main(){color=texture(gsxTextureCube_0,vec3(-1,0,0));}";
+    WriteShaderAsset(guest,shaderPath);preview.LoadShaderPreview(0,shaderPath);draw();
+    Check(colorCount(false)>100,"Cube -X face or sampler binding is wrong");
+    glDeleteTextures(1,&sentinelCube);
     auto bytes=ReadFile(shaderPath); bytes.pop_back(); WriteFile(shaderPath,bytes);
     rejected=false; try { ReadShaderAsset(shaderPath); } catch (const std::exception&) { rejected=true; }
     Check(rejected,"Truncated shader asset was accepted");
@@ -416,6 +481,6 @@ void main() {
 
 int main(int argc, char**)
 {
-    try { if (argc > 1) return GLTests(); SelectionTests(); MaterialTests(); ReferenceTests(); return 0; }
+    try { if (argc > 1) return GLTests(); SelectionTests(); MaterialTests(); ReferenceTests(); CubeTests(); return 0; }
     catch (const std::exception& ex) { std::fprintf(stderr, "%s\n", ex.what()); return 1; }
 }

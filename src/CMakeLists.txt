@@ -42,6 +42,7 @@ add_executable(pkzgui
     model/model_geometry.cpp
     model/model_shader_export.cpp
     shader/shader_asset.cpp
+    texture/cube_texture.cpp
     shader/shader_program.cpp
     model/model_shaders.cpp
     ui/app_menu.cpp
@@ -99,6 +100,7 @@ if(PKZGUI_BUILD_TESTS)
         model/model_geometry.cpp
         model/model_shader_export.cpp
         shader/shader_asset.cpp
+        texture/cube_texture.cpp
         shader/shader_program.cpp
         model/model_shaders.cpp
         package/resource_selection.cpp

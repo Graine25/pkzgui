@@ -3,14 +3,16 @@
 
 struct ShaderGLState
 {
-    int activeTexture=0, uniformBuffer=0, textures[16]{}, buffers[3]{};
+    int activeTexture=0, uniformBuffer=0, textures[16]{}, cubes[16]{}, buffers[3]{};
     ShaderGLState();
     ~ShaderGLState();
 };
 struct ShaderProgram
 {
+    struct TextureBinding { unsigned slot=0, unit=0, target=0x0DE1; };
+    std::vector<TextureBinding> textures;
     ShaderAsset asset;
-    std::string path;
+    std::string path, label;
     bool enabled=false, captured=false, capturedCamera=false;
     unsigned int program=0, buffers[3]{};
     ShaderConstants capturedConstants;

@@ -419,6 +419,8 @@ void ModelPreview::DestroyGL()
         texture.texture = texture.retexture = 0;
     }
     textureBytes = 0;
+    if (whiteCube) glDeleteTextures(1, &whiteCube);
+    whiteCube=0;
     if (whiteTexture) glDeleteTextures(1, &whiteTexture);
     whiteTexture = 0;
     if (colorTex) glDeleteTextures(1, &colorTex);
@@ -481,6 +483,8 @@ void ModelPreview::EnsureFBO(int w, int h)
     if (w < 1) w = 1;
     if (h < 1) h = 1;
     if (fbo && fboW == w && fboH == h) return;
+    if (whiteCube) glDeleteTextures(1, &whiteCube);
+    whiteCube=0;
     if (whiteTexture) glDeleteTextures(1, &whiteTexture);
     whiteTexture = 0;
     if (colorTex) glDeleteTextures(1, &colorTex);
@@ -724,16 +728,23 @@ void ModelPreview::RenderScene(int w, int h)
         if (textured && mesh.material < materialShaders.size() && materialShaders[mesh.material]->enabled) {
             uint32_t signs=0, alphaSigns=0;
             const auto& mat=materials[mesh.material];
-            for (unsigned slot=0;slot<16;++slot) {
+            for (const auto& binding:materialShaders[mesh.material]->textures) {
+                const auto slot=binding.slot;
                 unsigned texture=0;
                 if (slot < mat.samplers.size()) {
-                    texture=ShaderTextureID(mesh.material,slot);
+                    texture=ShaderTextureID(mesh.material,slot,binding.target);
                     const auto format=XenosTexture::D3DFormat::Decode(shaderTextures[mesh.material][slot].format);
                     if (format.signX==2) signs|=1u<<slot;
                     if (format.signX==3) signs|=1u<<(16+slot);
                     if (format.signW==2) alphaSigns|=1u<<(16+slot);
                 }
-                gl3::ActiveTexture(0x84C0+slot);glBindTexture(GL_TEXTURE_2D,texture?texture:whiteTexture);
+                if(!texture && binding.target==0x8513 && !whiteCube){
+                    std::array<std::vector<uint8_t>,6> faces;
+                    for(auto& face:faces)face.assign(4,255);
+                    whiteCube=UploadCube(faces,1);
+                }
+                gl3::ActiveTexture(0x84C0+binding.unit);
+                glBindTexture(binding.target,texture?texture:binding.target==0x8513?whiteCube:whiteTexture);
             }
             materialShaders[mesh.material]->Bind(mvp,view,mat.color,mat.alphaCutout,signs,alphaSigns);
             gl3::BindVertexArray(gpuMeshes[mi].vao);
@@ -845,6 +856,46 @@ unsigned int ModelPreview::UploadTexture(const std::vector<uint8_t>& rgba, uint3
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     GLint uploadedWidth = 0;
     glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &uploadedWidth);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, alignment);
+    glPixelStorei(0x0CF2, rowLength); glPixelStorei(0x0CF3, skipRows); glPixelStorei(0x0CF4, skipPixels);
+    gl3::BindBuffer(0x88EC, unpackBuffer);
+    if (uploadedWidth != static_cast<GLint>(width)) {
+        if (texture) glDeleteTextures(1, &texture);
+        throw std::runtime_error("Could not allocate model texture on the GPU.");
+    }
+    textureBytes += bytes;
+    return texture;
+}
+
+unsigned int ModelPreview::UploadCube(const std::array<std::vector<uint8_t>,6>& faces, uint32_t width)
+{
+    const size_t bytes = size_t(width) * width * 4 * 6;
+    const uint32_t height=width;
+    for(const auto& face:faces)if(face.size()!=bytes/6)throw std::runtime_error("Invalid cube face pixels.");
+    if (!width || !height || width > 4096 || height > 4096)
+        throw std::runtime_error("Model textures must be between 1 and 4096 pixels per side.");
+    if (bytes > 128 * 1024 * 1024 - textureBytes) throw std::runtime_error("Model textures exceed the 128 MiB preview budget.");
+    gl3::EnsureLoaded();
+    const ShaderGLState state;
+    GLint alignment, rowLength, skipRows, skipPixels, unpackBuffer;
+    glGetIntegerv(GL_UNPACK_ALIGNMENT, &alignment);
+    glGetIntegerv(0x0CF2, &rowLength); glGetIntegerv(0x0CF3, &skipRows); glGetIntegerv(0x0CF4, &skipPixels);
+    glGetIntegerv(0x88EF, &unpackBuffer);
+    gl3::BindBuffer(0x88EC, 0);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glPixelStorei(0x0CF2, 0); glPixelStorei(0x0CF3, 0); glPixelStorei(0x0CF4, 0);
+    unsigned int texture = 0;
+    glGenTextures(1, &texture);
+    glBindTexture(0x8513, texture);
+    for(unsigned face=0;face<6;++face)
+        glTexImage2D(0x8515+face, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, faces[face].data());
+    glTexParameteri(0x8513, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(0x8513, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(0x8513, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(0x8513, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(0x8513, 0x8072, GL_CLAMP_TO_EDGE);
+    GLint uploadedWidth = 0;
+    glGetTexLevelParameteriv(0x8515, 0, GL_TEXTURE_WIDTH, &uploadedWidth);
     glPixelStorei(GL_UNPACK_ALIGNMENT, alignment);
     glPixelStorei(0x0CF2, rowLength); glPixelStorei(0x0CF3, skipRows); glPixelStorei(0x0CF4, skipPixels);
     gl3::BindBuffer(0x88EC, unpackBuffer);

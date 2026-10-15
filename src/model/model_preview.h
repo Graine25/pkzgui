@@ -42,10 +42,10 @@ private:
     std::vector<ModelMesh> meshes;
     std::vector<ModelMaterial> materials;
     std::vector<std::unique_ptr<ShaderProgram>> materialShaders;
-    struct SamplerTexture { unsigned int texture=0; uint32_t format=0; bool attempted=false; };
+    struct SamplerTexture { unsigned int texture=0; uint32_t format=0, target=0; bool attempted=false; };
     std::vector<std::vector<SamplerTexture>> shaderTextures;
     std::future<ShaderAsset> shaderJob;
-    std::string shaderJobPath;
+    std::string shaderJobPath, shaderJobLabel;
     size_t shaderJobMaterial=0;
     const CMChunk* shaderJobSelected=nullptr;
     const PKPackage* shaderJobPackage=nullptr;
@@ -54,7 +54,8 @@ private:
     void PollShaderJob(const PackageSession& session);
     void DrawShaderActions();
     void ReloadShader(size_t material);
-    unsigned int ShaderTextureID(size_t material, size_t sampler);
+    unsigned int ShaderTextureID(size_t material, size_t sampler, unsigned target);
+    unsigned int UploadCube(const std::array<std::vector<uint8_t>,6>& faces, uint32_t size);
     void InstallShader(size_t material, const ShaderAsset& asset);
 
     struct MaterialTexture {
@@ -80,7 +81,7 @@ private:
     std::vector<GPUMesh> gpuMeshes;
     bool renderDirty = true;
     unsigned int program = 0;
-    unsigned int fbo = 0, colorTex = 0, depthRbo = 0, whiteTexture = 0;
+    unsigned int fbo = 0, colorTex = 0, depthRbo = 0, whiteTexture = 0, whiteCube = 0;
     int fboW = 0, fboH = 0;
 
     // Orbit camera

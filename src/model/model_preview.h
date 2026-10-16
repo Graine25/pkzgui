@@ -1,79 +1,92 @@
 #pragma once
+#include "model/model_renderer.h"
 #include "package/package_session.h"
-#include "model/model_geometry.h"
-#include <vector>
+#include "Resource/RZGeometry.h"
+#include <cstdint>
+#include <optional>
 #include <string>
-#include <cmath>
+#include <vector>
 
-struct ModelPreview
+struct GLFWwindow;
+struct ImVec2;
+
+class ModelPreview
 {
+public:
     ModelPreview() = default;
+    ~ModelPreview();
     ModelPreview(const ModelPreview&) = delete;
     ModelPreview& operator=(const ModelPreview&) = delete;
-    ~ModelPreview();
 
     void Update(const PackageSession& session);
-    void Draw(PackageSession* session = nullptr);
-    void DrawActions(PackageSession& session);
+    void Clear();
+    void Draw();
+    void DrawActions(PackageSession& session, GLFWwindow* window);
+    void DrawFields() const;
     std::vector<std::string> TakeLogMessages();
-    void SetTextured(bool enabled) { textured = enabled; renderDirty = true; }
-    void LoadPNG(size_t material, const std::string& path);
+
+    void SetTextured(bool enabled);
+    void LoadRetexture(size_t material, const std::string& path);
     void UsePackageTexture(size_t material);
     void UseRetexture(size_t material);
     void ClearRetexture(size_t material);
-    void ApplyPNG(PackageSession& session, size_t material);
-    const std::vector<ModelMesh>& Meshes() const { return meshes; }
-    const std::vector<ModelMaterial>& Materials() const { return materials; }
-    void Clear();
+    void ApplyRetexture(PackageSession& session, size_t material);
 
-    bool active = false;
-    std::string name, error;
-    size_t meshCount = 0, vertexCount = 0, triangleCount = 0;
+    bool IsActive() const { return active; }
+    const std::string& Name() const { return name; }
+    const std::string& Error() const { return error; }
+    const RZGeometry& Geometry() const { return geometry; }
+    const std::optional<CMChunkResourceHeader>& PackageTexture(size_t material) const;
+    size_t VertexCount() const { return vertexCount; }
+    size_t TriangleCount() const { return triangleCount; }
 
 private:
-    const CMChunk* selected = nullptr;
-    const PKPackage* package = nullptr;
-    uint64_t revision = 0;
+    static constexpr size_t kGeometryBudget = 128 * 1024 * 1024;
 
-    std::vector<ModelMesh> meshes;
-    std::vector<ModelMaterial> materials;
-    struct MaterialTexture {
-        unsigned int texture = 0, retexture = 0;
-        bool attempted = false;
-        size_t bytes = 0, retextureBytes = 0;
+    struct MaterialState
+    {
+        std::optional<CMChunkResourceHeader> packageTexture;
+        ModelRenderer::Texture texture;
+        bool textureRequested = false;
+        ModelRenderer::Texture retexture;
+        std::string retexturePath;
+        uint32_t retextureCRC = 0;
         bool useRetexture = false;
-        uint32_t pngCRC = 0;
-        std::string png, error;
+        bool alphaCutout = false;
     };
-    std::vector<MaterialTexture> materialTextures;
-    size_t textureBytes = 0;
-    bool textured = false, twoSided = true, hudCollapsed = false;
-    int materialIndex = 0;
-    float uvDivisor = 1024.f;
-    std::vector<std::string> logMessages;
-    bool DrawHUD(float x, float y, float width, float height);
-    void SelectMaterial(const char* id);
-    void Log(const std::string& message);
-    unsigned int MaterialTextureID(size_t index);
-    unsigned int UploadTexture(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height);
-    struct GPUMesh { unsigned int vao = 0, positions = 0, normals = 0, indices = 0, texcoords = 0; };
-    std::vector<GPUMesh> gpuMeshes;
+
+    void Load(const PKPackage& package, const CMChunkResourceHeader& resource);
+    void HandleCameraInput(bool blocked);
+    void RenderFrame(int width, int height);
+    std::vector<ModelRenderer::MeshStyle> MeshStyles();
+    unsigned int MaterialTexture(size_t index);
+
+    bool DrawOverlay(const ImVec2& origin, const ImVec2& size);
+    void DrawOverlayControls(bool collapsed, bool insidePopup);
+    void DrawMaterialCombo(const char* id);
+    void DrawTextureSummary(size_t index);
+    void DrawRetextureActions(PackageSession& session, GLFWwindow* window, size_t index);
+    void DrawShaderExport(GLFWwindow* window, size_t index);
+    void Log(std::string message);
+
+    SelectionKey shown;
+    bool active = false;
+    std::string name;
+    std::string error;
+    RZGeometry geometry;
+    std::vector<MaterialState> materials;
+    size_t vertexCount = 0;
+    size_t triangleCount = 0;
+
+    ModelRenderer renderer;
+    OrbitCamera camera;
+    int selectedMaterial = 0;
+    float uvDivisor = 1024.0f;
+    bool textured = false;
+    bool twoSided = true;
+    bool overlayCollapsed = false;
     bool renderDirty = true;
-    unsigned int program = 0;
-    unsigned int fbo = 0, colorTex = 0, depthRbo = 0, whiteTexture = 0;
-    int fboW = 0, fboH = 0;
-
-    // Orbit camera
-    float yaw = 0.6f, pitch = 0.35f, distance = 3.0f;
-    float centerX = 0, centerY = 0, centerZ = 0;
-    float bboxMin[3]{}, bboxMax[3]{};
-    bool hasBBox = false;
-
-    void EnsureProgram();
-    void EnsureFBO(int w, int h);
-    void DestroyGL();
-    bool DecodeGeometry(const PackageSession& session);
-    void ComputeBounds();
-    void UploadMeshes();
-    void RenderScene(int w, int h);
+    std::vector<std::string> logMessages;
 };
+
+void ExportMaterialShaders(const CMChunkMaterialInfo& material, const std::string& path);

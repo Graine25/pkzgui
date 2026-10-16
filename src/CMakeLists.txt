@@ -1,3 +1,6 @@
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 file(READ "${IMGUI_DIR}/misc/fonts/DroidSans.ttf" PKZGUI_FONT_HEX HEX)
 string(REGEX REPLACE "(..)" "0x\\1," PKZGUI_FONT_BYTES "${PKZGUI_FONT_HEX}")
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/pkzgui_font.h"
@@ -9,6 +12,7 @@ target_link_libraries(miniaudio PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
 if(UNIX AND NOT APPLE)
     target_link_libraries(miniaudio PRIVATE m)
 endif()
+
 set(PKZGUI_FFMPEG_EXECUTABLE "${PROJECT_SOURCE_DIR}/external/FFmpeg/ffmpeg${CMAKE_EXECUTABLE_SUFFIX}"
     CACHE FILEPATH "FFmpeg executable built alongside pkzgui")
 
@@ -21,8 +25,7 @@ if(APPLE OR WIN32)
         set_source_files_properties("${NATIVE_MENU_DIR}/native_menu_bar.c"
             PROPERTIES LANGUAGE OBJC COMPILE_OPTIONS "-fno-objc-arc")
     else()
-        set_source_files_properties("${NATIVE_MENU_DIR}/native_menu_bar.c"
-            PROPERTIES LANGUAGE CXX)
+        set_source_files_properties("${NATIVE_MENU_DIR}/native_menu_bar.c" PROPERTIES LANGUAGE CXX)
     endif()
     add_library(native_menu_bar STATIC "${NATIVE_MENU_DIR}/native_menu_bar.c")
     target_include_directories(native_menu_bar PUBLIC "${NATIVE_MENU_DIR}")
@@ -34,75 +37,59 @@ if(APPLE OR WIN32)
     endif()
 endif()
 
-add_executable(pkzgui
-    main.cpp
-    model/model_preview.cpp
+add_library(pkzgui_lib STATIC
+    app/app_menu.cpp
+    app/application.cpp
+    audio/audio.cpp
     model/model_controls.cpp
-    model/model_material.cpp
-    model/model_geometry.cpp
-    model/model_shader_export.cpp
-    ui/app_menu.cpp
-    ui/workspace.cpp
-    ui/workspace_actions.cpp
+    model/model_preview.cpp
+    model/model_renderer.cpp
     package/package_session.cpp
-    package/resource_selection.cpp
-    texture/texture_actions.cpp
-    texture/texture_preview.cpp
-    audio/audio_player.cpp
-    audio/audio_process.cpp
-    audio/audio_sample.cpp
-    platform/file_dialog.cpp
-    platform/file_io.cpp)
-if(APPLE)
-    target_sources(pkzgui PRIVATE platform/menu_shortcut.m)
+    platform/platform.cpp
+    render/gl.cpp
+    texture/texture.cpp
+    ui/widgets.cpp
+    ui/workspace.cpp
+    ui/workspace_commands.cpp)
+target_include_directories(pkzgui_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(pkzgui_lib PUBLIC pkzlib imgui nfd miniaudio Threads::Threads)
+target_compile_features(pkzgui_lib PUBLIC cxx_std_17)
+target_compile_definitions(pkzgui_lib
+    PUBLIC GL_SILENCE_DEPRECATION
+    PRIVATE PKZGUI_FFMPEG_PATH="${PKZGUI_FFMPEG_EXECUTABLE}")
+if(APPLE OR WIN32)
+    target_compile_definitions(pkzgui_lib PRIVATE PKZGUI_NATIVE_MENUS)
+    target_link_libraries(pkzgui_lib PUBLIC native_menu_bar)
 endif()
-target_include_directories(pkzgui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
-target_link_libraries(pkzgui PRIVATE imgui pkzlib nfd Threads::Threads miniaudio)
-target_compile_definitions(pkzgui PRIVATE PKZGUI_FFMPEG_PATH="${PKZGUI_FFMPEG_EXECUTABLE}")
+if(APPLE)
+    target_sources(pkzgui_lib PRIVATE app/menu_shortcut.m)
+endif()
+
+add_executable(pkzgui main.cpp)
+target_link_libraries(pkzgui PRIVATE pkzgui_lib)
+set_target_properties(pkzgui PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 if(EXISTS "${PKZGUI_FFMPEG_EXECUTABLE}")
     add_custom_command(TARGET pkzgui POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${PKZGUI_FFMPEG_EXECUTABLE}" "$<TARGET_FILE_DIR:pkzgui>/ffmpeg${CMAKE_EXECUTABLE_SUFFIX}")
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${PKZGUI_FFMPEG_EXECUTABLE}"
+            "$<TARGET_FILE_DIR:pkzgui>/ffmpeg${CMAKE_EXECUTABLE_SUFFIX}")
 endif()
-if(APPLE OR WIN32)
-    target_compile_definitions(pkzgui PRIVATE PKZGUI_NATIVE_MENUS)
-    target_link_libraries(pkzgui PRIVATE native_menu_bar)
-endif()
-target_compile_definitions(pkzgui PRIVATE GL_SILENCE_DEPRECATION)
-set_target_properties(pkzgui PROPERTIES
-    CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 if(PKZGUI_BUILD_TESTS)
-    add_executable(package_session_test ../tests/package_session_test.cpp package/package_session.cpp platform/file_io.cpp)
-    target_include_directories(package_session_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(package_session_test PRIVATE pkzlib Threads::Threads)
-    set_target_properties(package_session_test PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
+    function(pkzgui_test name)
+        add_executable(${name} "${PROJECT_SOURCE_DIR}/tests/${name}.cpp")
+        target_link_libraries(${name} PRIVATE pkzgui_lib)
+    endfunction()
+
+    pkzgui_test(package_session_test)
     add_test(NAME package_session COMMAND package_session_test "${CMAKE_CURRENT_BINARY_DIR}/test-packages")
-    add_executable(texture_actions_test ../tests/texture_actions_test.cpp package/package_session.cpp platform/file_io.cpp package/resource_selection.cpp texture/texture_actions.cpp)
-    target_include_directories(texture_actions_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(texture_actions_test PRIVATE pkzlib Threads::Threads)
-    set_target_properties(texture_actions_test PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
+
+    pkzgui_test(texture_actions_test)
     add_test(NAME texture_actions COMMAND texture_actions_test "${CMAKE_CURRENT_BINARY_DIR}/test-textures")
-    add_executable(audio_sample_test ../tests/audio_sample_test.cpp audio/audio_sample.cpp package/resource_selection.cpp audio/audio_process.cpp platform/file_io.cpp)
-    target_include_directories(audio_sample_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(audio_sample_test PRIVATE pkzlib Threads::Threads)
-    set_target_properties(audio_sample_test PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
+
+    pkzgui_test(audio_sample_test)
     add_test(NAME audio_sample COMMAND audio_sample_test)
-    add_executable(model_preview_test
-        ../tests/model_preview_test.cpp
-        model/model_preview.cpp
-        model/model_controls.cpp
-        model/model_material.cpp
-        model/model_geometry.cpp
-        model/model_shader_export.cpp
-        package/resource_selection.cpp
-        texture/texture_actions.cpp
-        platform/file_io.cpp
-        platform/file_dialog.cpp)
-    target_include_directories(model_preview_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(model_preview_test PRIVATE pkzlib imgui nfd Threads::Threads)
-    target_compile_definitions(model_preview_test PRIVATE GL_SILENCE_DEPRECATION)
-    set_target_properties(model_preview_test PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
+
+    pkzgui_test(model_preview_test)
     add_test(NAME model_selection COMMAND model_preview_test)
     add_test(NAME model_render COMMAND model_preview_test --gl)
     set_tests_properties(model_render PROPERTIES SKIP_RETURN_CODE 77)

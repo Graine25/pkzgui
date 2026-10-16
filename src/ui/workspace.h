@@ -1,38 +1,92 @@
 #pragma once
-#include "package/package_session.h"
-#include "texture/texture_preview.h"
+#include "app/app_menu.h"
+#include "audio/audio.h"
 #include "model/model_preview.h"
-#include "ui/app_menu.h"
-#include "audio/audio_player.h"
-#include "package/resource_selection.h"
+#include "package/package_session.h"
+#include "texture/texture.h"
+#include "ui/widgets.h"
+#include <optional>
+#include <string>
 
-struct Workspace
+struct GLFWwindow;
+
+class Workspace
 {
-    float splitX = 280.0f;
-    float fieldsWidth = 340.0f, logHeight = 200.0f, modelActionsHeight = 280.0f;
-    PackageSession session;
-    TexturePreview preview;
-    ModelPreview modelPreview;
-    AudioPlayer player;
-    std::optional<AudioSample> audio;
-    std::optional<CMChunkResourceHeader> resource;
-    std::string audioError, replacementPath;
-    int replacementWidth = 0, replacementHeight = 0;
-    bool confirmOpen = false, approvedOpen = false;
+public:
+    explicit Workspace(GLFWwindow* window);
+    Workspace(const Workspace&) = delete;
+    Workspace& operator=(const Workspace&) = delete;
+
+    void Open(const std::string& path);
+    void Execute(Command command);
     void Draw();
-    bool IsBusy() const { return session.IsLoading() || player.IsBusy(); }
-    void HandleAction(MenuAction action, GLFWwindow* window);
-    void UpdateMenus(AppMenu& menu);
+    void UpdateMenus(AppMenu& menu) const;
 
 private:
-    const CMChunk* detailsSelection = nullptr;
-    const PKPackage* detailsPackage = nullptr;
-    uint64_t detailsRevision = 0;
+    struct PaneSizes
+    {
+        float chunksWidth = 280.0f;
+        float inspectorWidth = 340.0f;
+        float logHeight = 200.0f;
+        float modelActionsHeight = 280.0f;
+    };
+
+    struct PendingReplacement
+    {
+        std::string path;
+        int width = 0;
+        int height = 0;
+    };
+
+    bool IsBusy() const;
+    bool IsReady() const;
+
+    void PollBackgroundWork();
+    void LogSessionChanges();
+    void LogStatusNow();
     void RefreshSelection();
+
+    void OpenPackage();
+    void SavePackage(bool chooseDestination);
+    void ExtractSelectedTexture();
+    void BeginTextureReplacement();
+    void ApplyTextureReplacement();
+    void ExtractSelectedAudio();
+    void PlaySelectedAudio();
+
+    void DrawMainColumn(float width, float height);
+    void DrawChunkPanel();
+    void DrawResourcePanel();
+    void DrawLogPanel();
+    void DrawInspectorColumn(float height);
     void DrawFields();
-    void AddLog(const std::string& message);
-    std::vector<std::string> log;
-    std::string loggedStatus, loggedError;
-    bool loadingLogged = false;
-    bool logChanged = false;
+    void DrawModelActionsPanel();
+    void DrawStatusBar(float height);
+
+    void DrawBusyOverlay();
+    void DrawReplaceTextureDialog();
+    void DrawDiscardChangesDialog();
+    void DrawErrorDialog();
+
+    GLFWwindow* window;
+    PackageSession session;
+    TexturePreview texturePreview;
+    ModelPreview modelPreview;
+    AudioPlayer player;
+    DebugLog log;
+    PaneSizes panes;
+
+    SelectionKey refreshed;
+    std::optional<CMChunkResourceHeader> resource;
+    std::optional<RZAudioSample> audio;
+    std::string audioError;
+
+    std::optional<PendingReplacement> replacement;
+    bool confirmDiscard = false;
+    bool discardApproved = false;
+    Command deferred = Command::None;
+
+    std::string loggedStatus;
+    std::string loggedError;
+    bool loggedLoading = false;
 };

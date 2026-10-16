@@ -34,13 +34,19 @@ namespace
     constexpr const char* kPackageFilter = "Package files";
     constexpr const char* kPackageExtensions = "pkz,pak";
 
+    const char* DialogError()
+    {
+        const char* error = NFD_GetError();
+        return error ? error : "Native file dialog failed.";
+    }
+
     class DialogSession
     {
     public:
         DialogSession()
         {
             if (NFD_Init() != NFD_OKAY)
-                throw std::runtime_error(NFD_GetError());
+                throw std::runtime_error(DialogError());
         }
         ~DialogSession() { NFD_Quit(); }
         DialogSession(const DialogSession&) = delete;
@@ -50,6 +56,8 @@ namespace
     nfdwindowhandle_t NativeParent(GLFWwindow* window)
     {
         nfdwindowhandle_t parent{};
+        if (!window)
+            return parent;
 #if defined(__APPLE__) || defined(_WIN32)
         NFD_GetNativeWindowFromGLFWWindow(window, &parent);
 #else
@@ -61,10 +69,12 @@ namespace
     std::string TakeDialogResult(nfdresult_t result, nfdu8char_t* path)
     {
         if (result == NFD_ERROR)
-            throw std::runtime_error(NFD_GetError());
+            throw std::runtime_error(DialogError());
         if (result == NFD_CANCEL)
             return {};
         const std::unique_ptr<nfdu8char_t, decltype(&NFD_FreePathU8)> owned(path, NFD_FreePathU8);
+        if (result != NFD_OKAY || !path)
+            throw std::runtime_error("Native file dialog returned no path.");
         return std::string(path);
     }
 
@@ -161,7 +171,8 @@ std::string PickOpenFile(GLFWwindow* parent, const char* filterName, const char*
     args.filterCount = 1;
     args.parentWindow = NativeParent(parent);
     nfdu8char_t* path = nullptr;
-    return TakeDialogResult(NFD_OpenDialogU8_With(&path, &args), path);
+    const nfdresult_t result = NFD_OpenDialogU8_With(&path, &args);
+    return TakeDialogResult(result, path);
 }
 
 std::string PickSaveFile(GLFWwindow* parent, const char* filterName, const char* extensions, const std::string& defaultName)
@@ -174,7 +185,8 @@ std::string PickSaveFile(GLFWwindow* parent, const char* filterName, const char*
     args.parentWindow = NativeParent(parent);
     args.defaultName = defaultName.c_str();
     nfdu8char_t* path = nullptr;
-    return TakeDialogResult(NFD_SaveDialogU8_With(&path, &args), path);
+    const nfdresult_t result = NFD_SaveDialogU8_With(&path, &args);
+    return TakeDialogResult(result, path);
 }
 
 std::string PickPackage(GLFWwindow* parent)

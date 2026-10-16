@@ -89,6 +89,9 @@ if(PKZGUI_BUILD_TESTS)
     pkzgui_test(audio_sample_test)
     add_test(NAME audio_sample COMMAND audio_sample_test)
 
+    pkzgui_test(file_dialog_test)
+    add_test(NAME file_dialog COMMAND file_dialog_test "${CMAKE_CURRENT_BINARY_DIR}/test-dialogs")
+
     pkzgui_test(model_preview_test)
     add_test(NAME model_selection COMMAND model_preview_test)
     add_test(NAME model_render COMMAND model_preview_test --gl)

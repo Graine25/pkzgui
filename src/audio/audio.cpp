@@ -99,10 +99,13 @@ namespace
     {
         DecodedAudio decoded;
         decoded.files = std::make_shared<TemporaryDirectory>();
-        const auto input = decoded.files->Path() / "xma.wav";
+        const auto input = decoded.files->Path() / "source.wav";
         decoded.wav = decoded.files->Path() / "decoded.wav";
         WriteFile(input, sample.BuildWave());
-        DecodeXma2ToWav(input, decoded.wav);
+        if (sample.IsPC())
+            std::filesystem::copy_file(input, decoded.wav);
+        else
+            DecodeXma2ToWav(input, decoded.wav);
 
         decoded.play = exportPath.empty();
         if (decoded.play)
@@ -411,15 +414,18 @@ Command DrawAudioPreview(const RZAudioSample& sample, AudioPlayer& player)
 void DrawAudioFields(const RZAudioSample& sample)
 {
     const auto& format = sample.format;
-    FieldRow("formatTag", "u16", HexString(format.formatTag) + " (XMA2)");
+    FieldRow("formatTag", "u16", HexString(format.formatTag) + (sample.IsPC() ? " (PCM)" : " (XMA2)"));
     FieldRow("channels", "u16", std::to_string(format.channels));
     FieldRow("samplesPerSec", "u32", std::to_string(format.samplesPerSec));
     FieldRow("avgBytesPerSec", "u32", std::to_string(format.avgBytesPerSec));
     FieldRow("blockAlign", "u16", std::to_string(format.blockAlign));
     FieldRow("bitsPerSample", "u16", std::to_string(format.bitsPerSample));
-    FieldRow("numStreams", "u16", std::to_string(format.numStreams));
-    FieldRow("samplesEncoded", "u32", std::to_string(format.samplesEncoded));
-    FieldRow("bytesPerBlock", "u32", std::to_string(format.bytesPerBlock));
-    FieldRow("blockCount", "u16", std::to_string(format.blockCount));
+    if (!sample.IsPC())
+    {
+        FieldRow("numStreams", "u16", std::to_string(format.numStreams));
+        FieldRow("samplesEncoded", "u32", std::to_string(format.samplesEncoded));
+        FieldRow("bytesPerBlock", "u32", std::to_string(format.bytesPerBlock));
+        FieldRow("blockCount", "u16", std::to_string(format.blockCount));
+    }
     FieldRow("payload", "bytes", std::to_string(sample.data.size()));
 }

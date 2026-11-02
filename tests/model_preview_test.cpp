@@ -377,7 +377,7 @@ namespace
         session.selected = &session.package->rootChunks[0];
         session.package->isLittleEndian = true;
         preview.Update(session);
-        Check(preview.Error().find("big-endian") != std::string::npos, "Unsupported byte order was silently decoded");
+        Check(preview.Error().find("byte order") != std::string::npos, "Mixed-endian mesh buffers were silently decoded");
 
         session.package->isLittleEndian = false;
         auto& vertices = session.package->rootChunks[0].children[1].children[1].data;

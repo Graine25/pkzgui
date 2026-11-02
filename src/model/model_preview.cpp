@@ -770,6 +770,10 @@ void ModelPreview::ApplyMaterialFlags(PackageSession& session, size_t index, uin
     if (index >= geometry.materials.size())
         throw std::runtime_error("Select a material first.");
 
+    const auto* materialSource = geometry.materials[index].source;
+    if (materialSource && materialSource->isLittleEndian)
+        throw std::runtime_error("PC material flags use a different layout; texture replacement is available.");
+
     const auto resource = session.SelectedResource();
     if (!resource || (resource->GetResourceType() != kCMResourceType_Geometry &&
                       resource->GetResourceType() != kCMResourceType_Environment))

@@ -321,6 +321,9 @@ void ModelPreview::DrawMaterialFlags(PackageSession& session, size_t index)
 {
     if (index >= geometry.materials.size())
         return;
+    const auto* source = geometry.materials[index].source;
+    if (source && source->isLittleEndian)
+        return;
 
     constexpr uint32_t kCellShading = 0x00080000u;
     constexpr uint32_t kRimLighting = 0x08000000u;

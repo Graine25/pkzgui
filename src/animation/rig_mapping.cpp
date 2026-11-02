@@ -54,6 +54,15 @@ void ModelPreview::InitializeAnimations(const PKPackage& package, const CMChunkR
         }
 
         std::vector<uint32_t> linkedRigs;
+        if (const auto* resource = RZGeometry::FindResource(package, model))
+            if (const auto* refs = resource->FindChild(GenSub_RefResourceArray))
+                for (size_t at = 0; at + 8 <= refs->data.size();)
+                {
+                    const auto type = refs->Read<uint32_t>(at);
+                    const auto crc = refs->Read<uint32_t>(at);
+                    if (type == kCMResourceType_Hierarchy)
+                        linkedRigs.push_back(crc);
+                }
         VisitMainChunks(package, [&](const CMChunk& chunk) {
             if (chunk.GetMaskedID() != GO_Type_Info || chunk.version != 18 || chunk.data.size() < 92)
                 return;
